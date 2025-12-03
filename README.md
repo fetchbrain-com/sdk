@@ -25,17 +25,17 @@ npm install @fetchbrain/sdk
 
 ```typescript
 import { FetchBrain } from '@fetchbrain/sdk';
-import { CheerioCrawler, Dataset } from 'crawlee';
+import { CheerioCrawler } from 'crawlee';
 
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
-    requestHandler: async ({ $, request }) => {
+    requestHandler: async ({ $, request, pushData }) => {
       // This only runs when AI needs to "learn" (new page)
       const data = {
         title: $('h1').text(),
         price: $('.price').text(),
       };
-      await Dataset.pushData(data);
+      await pushData(data);
     },
   }),
   {
