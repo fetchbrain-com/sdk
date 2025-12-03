@@ -37,6 +37,7 @@ export class FetchBrainClient {
       baseUrl: config.baseUrl || DEFAULT_BASE_URL,
       intelligence: config.intelligence || 'high',
       learning: config.learning ?? true,
+      alwaysRun: config.alwaysRun ?? false,
       timeout: config.timeout || DEFAULT_TIMEOUT,
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,

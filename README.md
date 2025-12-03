@@ -70,6 +70,7 @@ interface FetchBrainConfig {
   baseUrl?: string;           // API URL (default: production)
   intelligence?: IntelligenceLevel;  // AI accuracy level
   learning?: boolean;         // Enable AI learning (default: true)
+  alwaysRun?: boolean | string | string[];  // Which handlers to run (default: false)
   timeout?: number;           // Request timeout in ms (default: 500)
   debug?: boolean;            // Enable debug logging
 }
@@ -83,6 +84,95 @@ interface FetchBrainConfig {
 | `high` | High confidence responses |
 | `standard` | Balanced accuracy and speed |
 | `deep` | Deep knowledge, broader coverage |
+
+### Always Run Mode
+
+Control which handlers run when AI knows the page. Useful for routers with multiple handlers:
+
+```typescript
+// Skip all handlers when AI knows (default)
+FetchBrain.enhance(crawler, { alwaysRun: false });
+
+// Always run all handlers
+FetchBrain.enhance(crawler, { alwaysRun: true });
+
+// Only run 'listing' handler (skip 'detail' when AI knows)
+FetchBrain.enhance(crawler, { alwaysRun: 'listing' });
+
+// Run multiple specific handlers
+FetchBrain.enhance(crawler, { alwaysRun: ['listing', 'category'] });
+```
+
+| Value | Behavior |
+|-------|----------|
+| `false` (default) | Auto-skip all handlers when AI knows |
+| `true` | Always run all handlers |
+| `'listing'` | Only run handler with label 'listing' |
+| `['listing', 'category']` | Run handlers with these labels |
+
+## AI Context in Handler
+
+Access AI data directly in your handler via `context.ai`:
+
+```typescript
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, request, ai, pushData }) => {
+      // Check if AI already knows this page
+      if (ai?.known && ai.confidence! > 0.9) {
+        console.log('AI knows this page with high confidence');
+        
+        // Option 1: Use AI data directly (skip scraping)
+        await ai.useAIData();
+        return;
+        
+        // Option 2: Compare AI data with scraped data
+        // const scraped = { title: $('h1').text() };
+        // console.log('AI:', ai.data, 'Scraped:', scraped);
+      }
+      
+      // Scrape normally if AI doesn't know
+      const data = { title: $('h1').text() };
+      await pushData(data);
+    },
+  }),
+  { apiKey: 'your-api-key', alwaysRun: true }
+);
+```
+
+### `context.ai` Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `known` | boolean | Whether AI knows this URL |
+| `data` | object | AI data (if known) |
+| `confidence` | number | Confidence score 0-1 |
+| `learnedAt` | string | When AI learned this |
+| `useAIData()` | function | Push AI data and skip scraping |
+
+## Using Dataset.pushData
+
+If you use `Dataset.pushData()` instead of `context.pushData()`, use our wrapper for automatic AI learning:
+
+```typescript
+import { FetchBrain, pushData } from '@fetchbrain/sdk';
+import { Dataset } from 'crawlee';
+
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, request }) => {
+      const data = { title: $('h1').text() };
+      
+      // Use pushData wrapper for AI learning
+      await pushData(data, Dataset);
+      
+      // Or with named dataset
+      await pushData(data, Dataset, 'products');
+    },
+  }),
+  { apiKey: 'your-api-key' }
+);
+```
 
 ## Manual API
 
