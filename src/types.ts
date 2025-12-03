@@ -29,6 +29,17 @@ export interface FetchBrainConfig {
   /** Whether AI should learn from new pages */
   learning?: boolean;
   
+  /** 
+   * Control which handlers run when AI knows the page.
+   * - false: Auto-skip all handlers when AI knows (default)
+   * - true: Always run all handlers
+   * - string[]: Only run handlers with these labels (e.g., ['listing', 'category'])
+   * - 'default': Only run the default handler
+   * 
+   * AI data always available via context.ai
+   */
+  alwaysRun?: boolean | string | string[];
+  
   /** Custom data extractor for learning */
   extractForLearning?: (data: unknown) => Record<string, unknown>;
   

@@ -26,7 +26,8 @@
  */
 
 // Main exports
-export { FetchBrain, createFetchBrain } from './enhance';
+export { FetchBrain, createFetchBrain, pushData, getCurrentContext } from './enhance';
+export type { FetchBrainContext } from './enhance';
 export { FetchBrainClient } from './client';
 
 // Supporting modules
