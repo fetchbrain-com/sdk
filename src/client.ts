@@ -17,6 +17,26 @@ const DEFAULT_BASE_URL = 'https://api.fetchbrain.com';
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
 
 /**
+ * Scrape context sent with API requests
+ */
+interface ScrapeContext {
+  crawler?: string;
+  label?: string;
+  url?: string;
+}
+
+// Track current scrape context (set by enhance wrapper)
+let currentContext: ScrapeContext = {};
+
+export function setScrapeContext(ctx: ScrapeContext): void {
+  currentContext = ctx;
+}
+
+export function clearScrapeContext(): void {
+  currentContext = {};
+}
+
+/**
  * FetchBrain API Client
  * 
  * Handles all communication with the FetchBrain API including:
@@ -38,6 +58,7 @@ export class FetchBrainClient {
       intelligence: config.intelligence || 'high',
       learning: config.learning ?? true,
       alwaysRun: config.alwaysRun ?? false,
+      strictBuildMatch: config.strictBuildMatch ?? false,
       timeout: config.timeout || DEFAULT_TIMEOUT,
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,
@@ -154,13 +175,21 @@ export class FetchBrainClient {
   private async executeBatchQuery(urls: string[]): Promise<Map<string, AIResult>> {
     const results = new Map<string, AIResult>();
 
+    // Build query request
+    const request: QueryRequest = {
+      urls,
+      intelligence: this.config.intelligence,
+    };
+    
+    // If strictBuildMatch is enabled, include current build to filter results
+    if (this.config.strictBuildMatch && process.env.APIFY_ACTOR_BUILD_ID) {
+      request.build = process.env.APIFY_ACTOR_BUILD_ID;
+    }
+
     try {
       const response = await this.makeRequest<QueryResponse>('/v1/query', {
         method: 'POST',
-        body: JSON.stringify({
-          urls,
-          intelligence: this.config.intelligence,
-        } satisfies QueryRequest),
+        body: JSON.stringify(request),
       });
 
       this.circuitBreaker.recordSuccess();
@@ -171,7 +200,6 @@ export class FetchBrainClient {
           known: true,
           data: item.data,
           confidence: item.confidence,
-          learnedAt: item.learnedAt,
         });
       }
 
@@ -196,12 +224,44 @@ export class FetchBrainClient {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
 
+    // Build context headers
+    const contextHeaders: Record<string, string> = {
+      'X-FB-SDK': 'js',
+      'X-FB-Node': process.version || 'unknown',
+      'X-FB-Platform': process.platform || 'unknown',
+    };
+    
+    // Environment
+    if (process.env.NODE_ENV) {
+      contextHeaders['X-FB-Env'] = process.env.NODE_ENV;
+    }
+    
+    // Apify context (auto-detected from environment)
+    if (process.env.APIFY_ACTOR_ID) {
+      contextHeaders['X-FB-Apify'] = process.env.APIFY_ACTOR_ID;
+    }
+    if (process.env.APIFY_ACTOR_BUILD_ID) {
+      contextHeaders['X-FB-Build'] = process.env.APIFY_ACTOR_BUILD_ID;
+    }
+    if (process.env.APIFY_ACTOR_RUN_ID) {
+      contextHeaders['X-FB-Apify-Run'] = process.env.APIFY_ACTOR_RUN_ID;
+    }
+    
+    // Scrape context
+    if (currentContext.crawler) {
+      contextHeaders['X-FB-Crawler'] = currentContext.crawler;
+    }
+    if (currentContext.label) {
+      contextHeaders['X-FB-Label'] = currentContext.label;
+    }
+
     try {
       const response = await fetch(url, {
         ...options,
         headers: {
           'Authorization': `Bearer ${this.config.apiKey}`,
           'Content-Type': 'application/json',
+          ...contextHeaders,
           ...options.headers,
         },
         signal: controller.signal,

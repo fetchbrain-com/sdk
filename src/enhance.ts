@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import type { FetchBrainConfig, Logger } from './types';
-import { FetchBrainClient } from './client';
+import { FetchBrainClient, setScrapeContext, clearScrapeContext } from './client';
 import { createLogger } from './logger';
 
 /**
@@ -40,8 +40,6 @@ export interface FetchBrainContext {
   data?: Record<string, unknown>;
   /** Confidence score (0-1) */
   confidence?: number;
-  /** When AI learned this data */
-  learnedAt?: string;
   /** Use AI data and skip scraping (call in handler to early return) */
   useAIData: () => Promise<void>;
 }
@@ -126,7 +124,6 @@ export class FetchBrain {
       known: result.known,
       data: result.data,
       confidence: result.confidence,
-      learnedAt: result.learnedAt,
     };
   }
 
@@ -171,95 +168,110 @@ export class FetchBrain {
       return Object.assign(crawler as object, { fetchBrain: client }) as T & { fetchBrain: FetchBrainClient };
     }
 
+    // Detect crawler type for context
+    const crawlerType = (crawler as any).constructor?.name || 'Unknown';
+
     // Create wrapped handler
     const wrappedHandler = async (context: RequestHandlerContext) => {
       const { request } = context;
       const url = request.url;
+      const label = request.label;
 
-      // 1. Check if FetchBrain "knows" this URL
-      const aiResult = await client.query(url);
-      
-      // Track if AI data was used (to skip learning)
-      let usedAIData = false;
-      const originalPushData = context.pushData;
-
-      // 2. Add AI context to handler - developers can check and decide
-      context.ai = {
-        known: aiResult.known,
-        data: aiResult.data,
-        confidence: aiResult.confidence,
-        learnedAt: aiResult.learnedAt,
-        useAIData: async () => {
-          if (aiResult.known && aiResult.data && originalPushData) {
-            usedAIData = true;
-            await originalPushData.call(context, aiResult.data);
-            logger.info(`Used AI data: ${url} (confidence: ${aiResult.confidence?.toFixed(2) || 'N/A'})`);
-          }
-        },
-      };
-
-      // Save in userData for reference
-      request.userData = {
-        ...request.userData,
-        fetchBrainKnown: aiResult.known,
-        fetchBrainData: aiResult.data,
-      };
-
-      // 3. Check if we should run handler based on label
-      const handlerLabel = request.label;
-      const runHandler = shouldRunHandler(config.alwaysRun, handlerLabel);
-
-      // 4. Auto-optimization: if AI knows and handler should not run, skip
-      if (aiResult.known && aiResult.data && !runHandler) {
-        logger.info(`Optimized: ${url} [${handlerLabel || 'default'}] (confidence: ${aiResult.confidence?.toFixed(2) || 'N/A'})`);
-        if (originalPushData) {
-          await originalPushData.call(context, aiResult.data);
-        }
-        return;
-      }
-
-      // 5. Run handler (either AI doesn't know, or alwaysRun matches this label)
-      if (aiResult.known) {
-        logger.info(`Running handler [${handlerLabel || 'default'}] with AI data available: ${url}`);
-      } else {
-        logger.debug(`Learning: ${url}`);
-      }
-
-      // Track current URL for pushData interception
-      requestContextMap.set(context, url);
-
-      // Intercept context.pushData to capture results for learning
-      if (originalPushData && config.learning !== false) {
-        context.pushData = async (data: Record<string, unknown>) => {
-          // Skip learning if:
-          // 1. Developer already used AI data via useAIData()
-          // 2. AI already knows this URL (no need to re-learn)
-          const shouldLearn = !usedAIData && !aiResult.known;
-          
-          if (shouldLearn) {
-            const currentUrl = requestContextMap.get(context) || url;
-            await client.learn(currentUrl, data);
-          }
-          
-          // Continue with normal pushData
-          return originalPushData.call(context, data);
-        };
-      }
-
-      // Run handler with async context (for Dataset.pushData interception)
-      const requestContext: RequestContext = {
-        url,
-        client,
-        learning: config.learning !== false,
-        aiKnown: aiResult.known,
-      };
-      
-      await asyncContext.run(requestContext, async () => {
-        await originalHandler.call(crawler, context);
+      // Set scrape context for API calls
+      setScrapeContext({
+        crawler: crawlerType,
+        label: label,
+        url: url,
       });
 
-      // Cleanup
-      requestContextMap.delete(context);
+      try {
+        // 1. Check if FetchBrain "knows" this URL
+        const aiResult = await client.query(url);
+
+        // Track if AI data was used (to skip learning)
+        let usedAIData = false;
+        const originalPushData = context.pushData;
+
+        // 2. Add AI context to handler - developers can check and decide
+        context.ai = {
+          known: aiResult.known,
+          data: aiResult.data,
+          confidence: aiResult.confidence,
+          useAIData: async () => {
+            if (aiResult.known && aiResult.data && originalPushData) {
+              usedAIData = true;
+              await originalPushData.call(context, aiResult.data);
+              logger.info(`Used AI data: ${url} (confidence: ${aiResult.confidence?.toFixed(2) || 'N/A'})`);
+            }
+          },
+        };
+
+        // Save in userData for reference
+        request.userData = {
+          ...request.userData,
+          fetchBrainKnown: aiResult.known,
+          fetchBrainData: aiResult.data,
+        };
+
+        // 3. Check if we should run handler based on label
+        const handlerLabel = request.label;
+        const runHandler = shouldRunHandler(config.alwaysRun, handlerLabel);
+
+        // 4. Auto-optimization: if AI knows and handler should not run, skip
+        if (aiResult.known && aiResult.data && !runHandler) {
+          logger.info(`Optimized: ${url} [${handlerLabel || 'default'}] (confidence: ${aiResult.confidence?.toFixed(2) || 'N/A'})`);
+          if (originalPushData) {
+            await originalPushData.call(context, aiResult.data);
+          }
+          return;
+        }
+
+        // 5. Run handler (either AI doesn't know, or alwaysRun matches this label)
+        if (aiResult.known) {
+          logger.info(`Running handler [${handlerLabel || 'default'}] with AI data available: ${url}`);
+        } else {
+          logger.debug(`Learning: ${url}`);
+        }
+
+        // Track current URL for pushData interception
+        requestContextMap.set(context, url);
+
+        // Intercept context.pushData to capture results for learning
+        if (originalPushData && config.learning !== false) {
+          context.pushData = async (data: Record<string, unknown>) => {
+            // Skip learning if:
+            // 1. Developer already used AI data via useAIData()
+            // 2. AI already knows this URL (no need to re-learn)
+            const shouldLearn = !usedAIData && !aiResult.known;
+
+            if (shouldLearn) {
+              const currentUrl = requestContextMap.get(context) || url;
+              await client.learn(currentUrl, data);
+            }
+
+            // Continue with normal pushData
+            return originalPushData.call(context, data);
+          };
+        }
+
+        // Run handler with async context (for Dataset.pushData interception)
+        const requestContext: RequestContext = {
+          url,
+          client,
+          learning: config.learning !== false,
+          aiKnown: aiResult.known,
+        };
+
+        await asyncContext.run(requestContext, async () => {
+          await originalHandler.call(crawler, context);
+        });
+
+        // Cleanup
+        requestContextMap.delete(context);
+      } finally {
+        // Clear scrape context
+        clearScrapeContext();
+      }
     };
 
     // Replace the handler
