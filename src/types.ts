@@ -43,6 +43,14 @@ export interface FetchBrainConfig {
   /** Custom data extractor for learning */
   extractForLearning?: (data: unknown) => Record<string, unknown>;
   
+  /** 
+   * If true, only return cached data from the same build version.
+   * When a scraper updates, it will re-scrape instead of using stale data.
+   * Uses APIFY_ACTOR_BUILD_ID environment variable.
+   * Default: false
+   */
+  strictBuildMatch?: boolean;
+  
   /** Request timeout in ms (default: 500ms for fast degradation) */
   timeout?: number;
   
@@ -55,6 +63,8 @@ export interface QueryRequest {
   urls: string[];
   actorId?: string;
   intelligence: IntelligenceLevel;
+  /** If specified, only return data from this build version */
+  build?: string;
 }
 
 /** Single query result */
@@ -63,7 +73,7 @@ export interface QueryResultItem {
   known: boolean;
   data?: Record<string, unknown>;
   confidence?: number;
-  learnedAt?: string;
+  // Note: learnedAt is internal - API returns pure AI response
 }
 
 /** Query response from the API */
@@ -107,8 +117,8 @@ export interface AIResult {
   known: boolean;
   data?: Record<string, unknown>;
   confidence?: number;
-  learnedAt?: string;
-  fallback?: boolean;
+  // Note: No learnedAt - API returns pure AI response
+  fallback?: boolean;  // True if circuit breaker triggered fallback
 }
 
 /** Circuit breaker states */
