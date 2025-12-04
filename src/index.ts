@@ -35,6 +35,10 @@ export { CircuitBreaker } from './circuit-breaker';
 export { RequestBatcher } from './batch';
 export { createLogger } from './logger';
 
+// Telemetry
+export { collectTelemetry, TelemetryBuffer } from './telemetry';
+export type { CrawleeContext, RequestTiming } from './telemetry';
+
 // Types
 export type {
   FetchBrainConfig,
@@ -51,6 +55,11 @@ export type {
   BatchConfig,
   Logger,
   LogLevel,
+  // Telemetry types
+  TelemetryConfig,
+  TelemetryData,
+  TelemetryRequest,
+  TelemetryResponse,
 } from './types';
 
 // Enums
