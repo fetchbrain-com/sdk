@@ -56,6 +56,13 @@ export interface FetchBrainConfig {
   
   /** Enable debug logging */
   debug?: boolean;
+  
+  /**
+   * Telemetry configuration - opt-in anonymous data sharing
+   * Helps improve proxy recommendations, detect blocks, optimize configs
+   * Default: disabled
+   */
+  telemetry?: TelemetryConfig;
 }
 
 /** Query request to the API */
@@ -160,4 +167,79 @@ export interface Logger {
   info: (message: string, ...args: unknown[]) => void;
   warn: (message: string, ...args: unknown[]) => void;
   error: (message: string, ...args: unknown[]) => void;
+}
+
+// =============================================================================
+// TELEMETRY TYPES
+// =============================================================================
+
+/**
+ * Telemetry configuration - opt-in data sharing for AI improvements
+ */
+export interface TelemetryConfig {
+  /** Enable telemetry collection (default: false) */
+  enabled: boolean;
+  
+  /** Share performance metrics: response times, retries, status codes */
+  sharePerformance?: boolean;
+  
+  /** Share proxy info: country, type (never IP addresses) */
+  shareProxyInfo?: boolean;
+  
+  /** Share site patterns: block rates, rate limits detected */
+  shareSitePatterns?: boolean;
+}
+
+/**
+ * Telemetry data collected from Crawlee context
+ * All data is sanitized - no PII, no credentials, no raw content
+ */
+export interface TelemetryData {
+  // Request identification (hashed, not raw)
+  domain: string;              // e.g., "walmart.com"
+  urlHash: string;             // SHA256 of full URL
+  urlPattern?: string;         // e.g., "/ip/*" (generalized path)
+  
+  // Performance metrics
+  responseTimeMs?: number;     // Time to first byte
+  totalTimeMs?: number;        // Total request time
+  statusCode?: number;         // HTTP status
+  contentSize?: number;        // Response size in bytes
+  retryCount?: number;         // Number of retries for this request
+  
+  // Proxy information (anonymized)
+  proxyCountry?: string;       // e.g., "US"
+  proxyType?: string;          // "datacenter" | "residential" | "mobile"
+  proxySuccess?: boolean;      // Did this proxy work?
+  
+  // Session state (aggregates only)
+  sessionAge?: number;         // Requests in current session
+  sessionErrorScore?: number;  // Error rate 0-1
+  cookieCount?: number;        // Number of cookies (not values)
+  
+  // Blocking indicators
+  blocked?: boolean;           // Request was blocked
+  blockType?: string;          // "captcha" | "403" | "429" | "timeout"
+  
+  // Crawler metadata
+  crawlerType?: string;        // "cheerio" | "playwright" | "puppeteer"
+  requestLabel?: string;       // Developer-defined label
+  
+  // Timestamps
+  timestamp: string;           // ISO timestamp
+}
+
+/**
+ * Telemetry request to the API
+ */
+export interface TelemetryRequest {
+  entries: TelemetryData[];
+}
+
+/**
+ * Telemetry response from the API
+ */
+export interface TelemetryResponse {
+  received: number;
+  status: 'success' | 'partial' | 'error';
 }

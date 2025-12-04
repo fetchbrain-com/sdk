@@ -8,6 +8,9 @@ import type {
   AIResult,
   IntelligenceLevel,
   Logger,
+  TelemetryData,
+  TelemetryRequest,
+  TelemetryResponse,
 } from './types';
 import { CircuitBreaker } from './circuit-breaker';
 import { RequestBatcher } from './batch';
@@ -62,6 +65,7 @@ export class FetchBrainClient {
       timeout: config.timeout || DEFAULT_TIMEOUT,
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,
+      telemetry: config.telemetry ?? { enabled: true },
     };
 
     this.logger = createLogger(
@@ -303,5 +307,38 @@ export class FetchBrainClient {
    */
   clearBatch(): void {
     this.batcher.clear();
+  }
+
+  /**
+   * Send telemetry data to the API
+   * This is fire-and-forget - failures are silently ignored
+   */
+  async sendTelemetry(entries: TelemetryData[]): Promise<void> {
+    if (!this.config.telemetry?.enabled || entries.length === 0) {
+      return;
+    }
+
+    try {
+      await this.makeRequest<TelemetryResponse>('/v1/telemetry', {
+        method: 'POST',
+        body: JSON.stringify({ entries } satisfies TelemetryRequest),
+      });
+    } catch {
+      // Telemetry failures are silent - don't affect scraper
+    }
+  }
+
+  /**
+   * Check if telemetry is enabled
+   */
+  isTelemetryEnabled(): boolean {
+    return this.config.telemetry?.enabled ?? false;
+  }
+
+  /**
+   * Get telemetry config
+   */
+  getTelemetryConfig() {
+    return this.config.telemetry;
   }
 }

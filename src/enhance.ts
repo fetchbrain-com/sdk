@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'async_hooks';
-import type { FetchBrainConfig, Logger } from './types';
+import type { FetchBrainConfig, Logger, TelemetryData } from './types';
 import { FetchBrainClient, setScrapeContext, clearScrapeContext } from './client';
 import { createLogger } from './logger';
+import { collectTelemetry, TelemetryBuffer } from './telemetry';
 
 /**
  * Async context for tracking current request
@@ -158,6 +159,18 @@ export class FetchBrain {
   ): T & { fetchBrain: FetchBrainClient } {
     const client = new FetchBrainClient(config);
     const logger = createLogger(config.debug ? 'debug' : 'info', true);
+    
+    // Telemetry buffer - automatically flushes to API
+    const telemetryBuffer = new TelemetryBuffer({
+      maxSize: 50,
+      flushInterval: 30000,
+      onFlush: async (entries: TelemetryData[]) => {
+        if (config.telemetry?.enabled) {
+          await client.sendTelemetry(entries);
+          logger.debug(`Telemetry: sent ${entries.length} entries`);
+        }
+      },
+    });
 
     // Get original request handler
     const originalHandler = (crawler as any).requestHandler || 
@@ -176,6 +189,7 @@ export class FetchBrain {
       const { request } = context;
       const url = request.url;
       const label = request.label;
+      const startTime = Date.now();
 
       // Set scrape context for API calls
       setScrapeContext({
@@ -268,6 +282,83 @@ export class FetchBrain {
 
         // Cleanup
         requestContextMap.delete(context);
+        
+        // Collect telemetry (if enabled) - behind the scenes
+        if (config.telemetry?.enabled) {
+          try {
+            const telemetry = await collectTelemetry(
+              {
+                request: {
+                  url: url,
+                  retryCount: (request as any).retryCount,
+                  label: label,
+                  userData: request.userData,
+                },
+                response: {
+                  statusCode: (context as any).response?.statusCode || (context as any).response?.status,
+                },
+                proxyInfo: (context as any).proxyInfo ? {
+                  url: (context as any).proxyInfo.url,
+                  hostname: (context as any).proxyInfo.hostname,
+                  countryCode: (context as any).proxyInfo.countryCode,
+                } : undefined,
+                session: (context as any).session ? {
+                  errorScore: (context as any).session.errorScore,
+                  usageCount: (context as any).session.usageCount,
+                } : undefined,
+                crawler: {
+                  constructor: { name: crawlerType },
+                },
+              },
+              {
+                startTime,
+                endTime: Date.now(),
+                responseTime: Date.now() - startTime,
+                contentSize: (context as any).response?.body?.length,
+              },
+              config.telemetry
+            );
+            
+            if (telemetry) {
+              telemetryBuffer.add(telemetry);
+            }
+          } catch (err) {
+            // Telemetry errors should never affect scraping
+            logger.debug(`Telemetry collection error: ${err}`);
+          }
+        }
+      } catch (err) {
+        // On error, still collect telemetry with error info
+        if (config.telemetry?.enabled) {
+          try {
+            const telemetry = await collectTelemetry(
+              {
+                request: {
+                  url: url,
+                  retryCount: (request as any).retryCount,
+                  label: label,
+                },
+                crawler: {
+                  constructor: { name: crawlerType },
+                },
+              },
+              {
+                startTime,
+                endTime: Date.now(),
+                responseTime: Date.now() - startTime,
+              },
+              config.telemetry,
+              err instanceof Error ? err : new Error(String(err))
+            );
+            
+            if (telemetry) {
+              telemetryBuffer.add(telemetry);
+            }
+          } catch {
+            // Ignore telemetry errors
+          }
+        }
+        throw err; // Re-throw original error
       } finally {
         // Clear scrape context
         clearScrapeContext();
@@ -281,6 +372,23 @@ export class FetchBrain {
     }
     if ('userDefinedRequestHandler' in crawlerAny) {
       crawlerAny.userDefinedRequestHandler = wrappedHandler;
+    }
+
+    // Wrap the run method to flush telemetry when crawl completes
+    if (typeof crawlerAny.run === 'function') {
+      const originalRun = crawlerAny.run.bind(crawlerAny);
+      crawlerAny.run = async (...args: unknown[]) => {
+        try {
+          const result = await originalRun(...args);
+          return result;
+        } finally {
+          // Flush telemetry buffer when crawl completes
+          if (config.telemetry?.enabled) {
+            logger.debug('Telemetry: flushing on crawl complete');
+            await telemetryBuffer.stop();
+          }
+        }
+      };
     }
 
     // Attach client for direct access
