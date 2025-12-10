@@ -2,8 +2,7 @@
 
 > **The AI That Already Knows The Web** - AI-powered scraping optimization for Crawlee
 
-[![npm version](https://badge.fury.io/js/@fetchbrain%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 FetchBrain uses a neural network continuously trained on millions of web pages. Ask first → Get instant results. AI doesn't know? → We fetch & learn for next time.
 
