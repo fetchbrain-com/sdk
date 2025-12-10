@@ -1,14 +1,14 @@
 /**
  * FetchBrain SDK
- * 
+ *
  * AI-powered scraping optimization for Crawlee crawlers.
  * "The AI That Already Knows The Web"
- * 
+ *
  * @example
  * ```typescript
- * import { FetchBrain } from '@fetchbrain/sdk';
+ * import { FetchBrain } from '@fetchbrain.com/sdk';
  * import { CheerioCrawler } from 'crawlee';
- * 
+ *
  * const crawler = FetchBrain.enhance(new CheerioCrawler({
  *   requestHandler: async ({ $, request }) => {
  *     // This only runs when AI needs to "learn" (new page)
@@ -20,24 +20,29 @@
  *   intelligence: 'high',  // High confidence AI responses
  *   learning: true,        // AI learns from scraped pages
  * });
- * 
+ *
  * await crawler.run(urls);
  * ```
  */
 
 // Main exports
-export { FetchBrain, createFetchBrain, pushData, getCurrentContext } from './enhance';
-export type { FetchBrainContext } from './enhance';
-export { FetchBrainClient } from './client';
+export {
+  FetchBrain,
+  createFetchBrain,
+  pushData,
+  getCurrentContext,
+} from "./enhance";
+export type { FetchBrainContext } from "./enhance";
+export { FetchBrainClient } from "./client";
 
 // Supporting modules
-export { CircuitBreaker } from './circuit-breaker';
-export { RequestBatcher } from './batch';
-export { createLogger } from './logger';
+export { CircuitBreaker } from "./circuit-breaker";
+export { RequestBatcher } from "./batch";
+export { createLogger } from "./logger";
 
 // Telemetry
-export { collectTelemetry, TelemetryBuffer } from './telemetry';
-export type { CrawleeContext, RequestTiming } from './telemetry';
+export { collectTelemetry, TelemetryBuffer } from "./telemetry";
+export type { CrawleeContext, RequestTiming } from "./telemetry";
 
 // Types
 export type {
@@ -60,7 +65,7 @@ export type {
   TelemetryData,
   TelemetryRequest,
   TelemetryResponse,
-} from './types';
+} from "./types";
 
 // Enums
-export { AIMemoryDepth } from './types';
+export { AIMemoryDepth } from "./types";

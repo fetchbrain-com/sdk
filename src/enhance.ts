@@ -441,7 +441,7 @@ interface DatasetLike {
  * @example
  * ```typescript
  * import { Dataset } from 'crawlee';
- * import { pushData } from '@fetchbrain/sdk';
+ * import { pushData } from '@fetchbrain.com/sdk';
  *
  * // Default dataset:
  * await pushData(data, Dataset);
