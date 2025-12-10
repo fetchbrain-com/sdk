@@ -1,6 +1,6 @@
 {
   "name": "@fetchbrain/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI-powered scraping optimization for Crawlee - The AI That Already Knows The Web",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
