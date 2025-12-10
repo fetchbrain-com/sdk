@@ -20,8 +20,13 @@ on:
         type: boolean
 
 jobs:
+  ci:
+    name: Run CI
+    uses: ./.github/workflows/ci.yml
+
   publish:
     name: Publish to npm
+    needs: ci # Wait for CI to pass
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,12 +45,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Run tests
-        run: npm run test
-
-      - name: Run lint
-        run: npm run lint
 
       - name: Build
         run: npm run build
