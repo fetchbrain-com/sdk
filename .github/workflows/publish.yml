@@ -97,7 +97,7 @@ jobs:
         run: |
           echo "## 📦 Published to npm" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Package**: @fetchbrain/sdk" >> $GITHUB_STEP_SUMMARY
+          echo "- **Package**: @fetchbrain.com/sdk" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: $(node -p \"require('./package.json').version\")" >> $GITHUB_STEP_SUMMARY
           echo "- **Tag**: ${{ steps.npm_tag.outputs.TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Registry**: https://www.npmjs.com/package/@fetchbrain/sdk" >> $GITHUB_STEP_SUMMARY
+          echo "- **Registry**: https://www.npmjs.com/package/@fetchbrain.com/sdk" >> $GITHUB_STEP_SUMMARY

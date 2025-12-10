@@ -1,8 +1,8 @@
-# @fetchbrain/sdk
+# @fetchbrain.com/sdk
 
 > **The AI That Already Knows The Web** - AI-powered scraping optimization for Crawlee
 
-[![npm version](https://badge.fury.io/js/@fetchbrain%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain/sdk)
+[![npm version](https://badge.fury.io/js/@fetchbrain%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 FetchBrain uses a neural network continuously trained on millions of web pages. Ask first → Get instant results. AI doesn't know? → We fetch & learn for next time.
@@ -18,30 +18,30 @@ FetchBrain uses a neural network continuously trained on millions of web pages. 
 ## Installation
 
 ```bash
-npm install @fetchbrain/sdk
+npm install @fetchbrain.com/sdk
 ```
 
 ## Quick Start
 
 ```typescript
-import { FetchBrain } from '@fetchbrain/sdk';
-import { CheerioCrawler } from 'crawlee';
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import { CheerioCrawler } from "crawlee";
 
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
     requestHandler: async ({ $, request, pushData }) => {
       // This only runs when AI needs to "learn" (new page)
       const data = {
-        title: $('h1').text(),
-        price: $('.price').text(),
+        title: $("h1").text(),
+        price: $(".price").text(),
       };
       await pushData(data);
     },
   }),
   {
     apiKey: process.env.FETCHBRAIN_API_KEY,
-    intelligence: 'high', // High confidence AI responses
-    learning: true,       // AI learns from scraped pages
+    intelligence: "high", // High confidence AI responses
+    learning: true, // AI learns from scraped pages
   }
 );
 
@@ -65,25 +65,25 @@ Your Scraper → FetchBrain SDK → AI knows? → YES → Return AI knowledge (s
 interface FetchBrainConfig {
   // Required
   apiKey: string;
-  
+
   // Optional
-  baseUrl?: string;           // API URL (default: production)
-  intelligence?: IntelligenceLevel;  // AI accuracy level
-  learning?: boolean;         // Enable AI learning (default: true)
-  alwaysRun?: boolean | string | string[];  // Which handlers to run (default: false)
-  timeout?: number;           // Request timeout in ms (default: 500)
-  debug?: boolean;            // Enable debug logging
+  baseUrl?: string; // API URL (default: production)
+  intelligence?: IntelligenceLevel; // AI accuracy level
+  learning?: boolean; // Enable AI learning (default: true)
+  alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
+  timeout?: number; // Request timeout in ms (default: 500)
+  debug?: boolean; // Enable debug logging
 }
 ```
 
 ### Intelligence Levels
 
-| Level | Description |
-|-------|-------------|
+| Level      | Description                         |
+| ---------- | ----------------------------------- |
 | `realtime` | Live AI inference, highest accuracy |
-| `high` | High confidence responses |
-| `standard` | Balanced accuracy and speed |
-| `deep` | Deep knowledge, broader coverage |
+| `high`     | High confidence responses           |
+| `standard` | Balanced accuracy and speed         |
+| `deep`     | Deep knowledge, broader coverage    |
 
 ### Always Run Mode
 
@@ -97,18 +97,18 @@ FetchBrain.enhance(crawler, { alwaysRun: false });
 FetchBrain.enhance(crawler, { alwaysRun: true });
 
 // Only run 'listing' handler (skip 'detail' when AI knows)
-FetchBrain.enhance(crawler, { alwaysRun: 'listing' });
+FetchBrain.enhance(crawler, { alwaysRun: "listing" });
 
 // Run multiple specific handlers
-FetchBrain.enhance(crawler, { alwaysRun: ['listing', 'category'] });
+FetchBrain.enhance(crawler, { alwaysRun: ["listing", "category"] });
 ```
 
-| Value | Behavior |
-|-------|----------|
-| `false` (default) | Auto-skip all handlers when AI knows |
-| `true` | Always run all handlers |
-| `'listing'` | Only run handler with label 'listing' |
-| `['listing', 'category']` | Run handlers with these labels |
+| Value                     | Behavior                              |
+| ------------------------- | ------------------------------------- |
+| `false` (default)         | Auto-skip all handlers when AI knows  |
+| `true`                    | Always run all handlers               |
+| `'listing'`               | Only run handler with label 'listing' |
+| `['listing', 'category']` | Run handlers with these labels        |
 
 ## AI Context in Handler
 
@@ -120,34 +120,34 @@ const crawler = FetchBrain.enhance(
     requestHandler: async ({ $, request, ai, pushData }) => {
       // Check if AI already knows this page
       if (ai?.known && ai.confidence! > 0.9) {
-        console.log('AI knows this page with high confidence');
-        
+        console.log("AI knows this page with high confidence");
+
         // Option 1: Use AI data directly (skip scraping)
         await ai.useAIData();
         return;
-        
+
         // Option 2: Compare AI data with scraped data
         // const scraped = { title: $('h1').text() };
         // console.log('AI:', ai.data, 'Scraped:', scraped);
       }
-      
+
       // Scrape normally if AI doesn't know
-      const data = { title: $('h1').text() };
+      const data = { title: $("h1").text() };
       await pushData(data);
     },
   }),
-  { apiKey: 'your-api-key', alwaysRun: true }
+  { apiKey: "your-api-key", alwaysRun: true }
 );
 ```
 
 ### `context.ai` Properties
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `known` | boolean | Whether AI knows this URL |
-| `data` | object | AI data (if known) |
-| `confidence` | number | Confidence score 0-1 |
-| `learnedAt` | string | When AI learned this |
+| Property      | Type     | Description                    |
+| ------------- | -------- | ------------------------------ |
+| `known`       | boolean  | Whether AI knows this URL      |
+| `data`        | object   | AI data (if known)             |
+| `confidence`  | number   | Confidence score 0-1           |
+| `learnedAt`   | string   | When AI learned this           |
 | `useAIData()` | function | Push AI data and skip scraping |
 
 ## Using Dataset.pushData
@@ -155,22 +155,22 @@ const crawler = FetchBrain.enhance(
 If you use `Dataset.pushData()` instead of `context.pushData()`, use our wrapper for automatic AI learning:
 
 ```typescript
-import { FetchBrain, pushData } from '@fetchbrain/sdk';
-import { Dataset } from 'crawlee';
+import { FetchBrain, pushData } from "@fetchbrain.com/sdk";
+import { Dataset } from "crawlee";
 
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
     requestHandler: async ({ $, request }) => {
-      const data = { title: $('h1').text() };
-      
+      const data = { title: $("h1").text() };
+
       // Use pushData wrapper for AI learning
       await pushData(data, Dataset);
-      
+
       // Or with named dataset
-      await pushData(data, Dataset, 'products');
+      await pushData(data, Dataset, "products");
     },
   }),
-  { apiKey: 'your-api-key' }
+  { apiKey: "your-api-key" }
 );
 ```
 
@@ -179,23 +179,23 @@ const crawler = FetchBrain.enhance(
 For custom integrations without Crawlee:
 
 ```typescript
-import { FetchBrain } from '@fetchbrain/sdk';
+import { FetchBrain } from "@fetchbrain.com/sdk";
 
 const ai = new FetchBrain({
-  apiKey: 'your-api-key',
-  intelligence: 'high',
+  apiKey: "your-api-key",
+  intelligence: "high",
 });
 
 // Check if AI knows a URL
-const result = await ai.query({ url: 'https://example.com/product/123' });
+const result = await ai.query({ url: "https://example.com/product/123" });
 
 if (result.known) {
-  console.log('AI knows:', result.data);
-  console.log('Confidence:', result.confidence);
+  console.log("AI knows:", result.data);
+  console.log("Confidence:", result.confidence);
 } else {
   // Fetch and teach
-  const data = await scrapeUrl('https://example.com/product/123');
-  await ai.learn({ url: 'https://example.com/product/123', data });
+  const data = await scrapeUrl("https://example.com/product/123");
+  await ai.learn({ url: "https://example.com/product/123", data });
 }
 ```
 
@@ -230,16 +230,16 @@ const crawler = FetchBrain.enhance(crawler, {
 ### Mock Client for Testing
 
 ```typescript
-import { MockFetchBrain } from '@fetchbrain/sdk/mock';
+import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
 
 const mock = new MockFetchBrain({
   initialKnowledge: new Map([
-    ['https://example.com/product', { title: 'Known Product' }],
+    ["https://example.com/product", { title: "Known Product" }],
   ]),
 });
 
 // Use in tests
-const result = await mock.query('https://example.com/product');
+const result = await mock.query("https://example.com/product");
 expect(result.known).toBe(true);
 ```
 
