@@ -1,8 +1,12 @@
-import { AsyncLocalStorage } from 'async_hooks';
-import type { FetchBrainConfig, Logger, TelemetryData } from './types';
-import { FetchBrainClient, setScrapeContext, clearScrapeContext } from './client';
-import { createLogger } from './logger';
-import { collectTelemetry, TelemetryBuffer } from './telemetry';
+import { AsyncLocalStorage } from "async_hooks";
+import type { FetchBrainConfig, Logger, TelemetryData } from "./types";
+import {
+  FetchBrainClient,
+  setScrapeContext,
+  clearScrapeContext,
+} from "./client";
+import { createLogger } from "./logger";
+import { collectTelemetry, TelemetryBuffer } from "./telemetry";
 
 /**
  * Async context for tracking current request
@@ -28,7 +32,7 @@ export function getCurrentContext(): RequestContext | undefined {
  * Crawlee crawler type - minimal interface for compatibility
  * We use a loose type to support various Crawlee crawler versions
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
 type CrawlerLike = any;
 
 /**
@@ -75,25 +79,17 @@ function shouldRunHandler(
   if (alwaysRun === undefined || alwaysRun === false) {
     return false;
   }
-  
+
   // Always run all handlers
   if (alwaysRun === true) {
     return true;
   }
-  
+
   // Run specific label(s)
   const labels = Array.isArray(alwaysRun) ? alwaysRun : [alwaysRun];
-  const requestLabel = label || 'default';
-  
-  return labels.includes(requestLabel);
-}
+  const requestLabel = label || "default";
 
-/**
- * Enhanced crawler with FetchBrain optimization
- */
-interface EnhancedCrawler<T extends CrawlerLike> extends CrawlerLike {
-  fetchBrain: FetchBrainClient;
-  originalCrawler: T;
+  return labels.includes(requestLabel);
 }
 
 /**
@@ -103,7 +99,7 @@ const requestContextMap = new WeakMap<object, string>();
 
 /**
  * FetchBrain main class
- * 
+ *
  * Provides the static enhance() method to wrap Crawlee crawlers
  * with AI-powered optimization
  */
@@ -113,7 +109,7 @@ export class FetchBrain {
 
   constructor(config: FetchBrainConfig) {
     this.client = new FetchBrainClient(config);
-    this.logger = createLogger(config.debug ? 'debug' : 'info', true);
+    this.logger = createLogger(config.debug ? "debug" : "info", true);
   }
 
   /**
@@ -144,11 +140,11 @@ export class FetchBrain {
 
   /**
    * Enhance a Crawlee crawler with FetchBrain optimization
-   * 
+   *
    * This wraps the crawler's request handler to:
    * 1. Query AI before making requests (AI knows = skip request)
    * 2. Teach AI after successful requests (learning)
-   * 
+   *
    * @param crawler - Any Crawlee crawler (CheerioCrawler, PlaywrightCrawler, etc.)
    * @param config - FetchBrain configuration
    * @returns Enhanced crawler with same interface
@@ -158,8 +154,8 @@ export class FetchBrain {
     config: FetchBrainConfig
   ): T & { fetchBrain: FetchBrainClient } {
     const client = new FetchBrainClient(config);
-    const logger = createLogger(config.debug ? 'debug' : 'info', true);
-    
+    const logger = createLogger(config.debug ? "debug" : "info", true);
+
     // Telemetry buffer - automatically flushes to API
     const telemetryBuffer = new TelemetryBuffer({
       maxSize: 50,
@@ -173,16 +169,19 @@ export class FetchBrain {
     });
 
     // Get original request handler
-    const originalHandler = (crawler as any).requestHandler || 
-                           (crawler as any).userDefinedRequestHandler;
+    const originalHandler =
+      (crawler as any).requestHandler ||
+      (crawler as any).userDefinedRequestHandler;
 
     if (!originalHandler) {
-      logger.warn('No request handler found on crawler, returning unmodified');
-      return Object.assign(crawler as object, { fetchBrain: client }) as T & { fetchBrain: FetchBrainClient };
+      logger.warn("No request handler found on crawler, returning unmodified");
+      return Object.assign(crawler as object, { fetchBrain: client }) as T & {
+        fetchBrain: FetchBrainClient;
+      };
     }
 
     // Detect crawler type for context
-    const crawlerType = (crawler as any).constructor?.name || 'Unknown';
+    const crawlerType = (crawler as any).constructor?.name || "Unknown";
 
     // Create wrapped handler
     const wrappedHandler = async (context: RequestHandlerContext) => {
@@ -215,7 +214,11 @@ export class FetchBrain {
             if (aiResult.known && aiResult.data && originalPushData) {
               usedAIData = true;
               await originalPushData.call(context, aiResult.data);
-              logger.info(`Used AI data: ${url} (confidence: ${aiResult.confidence?.toFixed(2) || 'N/A'})`);
+              logger.info(
+                `Used AI data: ${url} (confidence: ${
+                  aiResult.confidence?.toFixed(2) || "N/A"
+                })`
+              );
             }
           },
         };
@@ -233,7 +236,11 @@ export class FetchBrain {
 
         // 4. Auto-optimization: if AI knows and handler should not run, skip
         if (aiResult.known && aiResult.data && !runHandler) {
-          logger.info(`Optimized: ${url} [${handlerLabel || 'default'}] (confidence: ${aiResult.confidence?.toFixed(2) || 'N/A'})`);
+          logger.info(
+            `Optimized: ${url} [${handlerLabel || "default"}] (confidence: ${
+              aiResult.confidence?.toFixed(2) || "N/A"
+            })`
+          );
           if (originalPushData) {
             await originalPushData.call(context, aiResult.data);
           }
@@ -242,7 +249,11 @@ export class FetchBrain {
 
         // 5. Run handler (either AI doesn't know, or alwaysRun matches this label)
         if (aiResult.known) {
-          logger.info(`Running handler [${handlerLabel || 'default'}] with AI data available: ${url}`);
+          logger.info(
+            `Running handler [${
+              handlerLabel || "default"
+            }] with AI data available: ${url}`
+          );
         } else {
           logger.debug(`Learning: ${url}`);
         }
@@ -282,7 +293,7 @@ export class FetchBrain {
 
         // Cleanup
         requestContextMap.delete(context);
-        
+
         // Collect telemetry (if enabled) - behind the scenes
         if (config.telemetry?.enabled) {
           try {
@@ -295,17 +306,23 @@ export class FetchBrain {
                   userData: request.userData,
                 },
                 response: {
-                  statusCode: (context as any).response?.statusCode || (context as any).response?.status,
+                  statusCode:
+                    (context as any).response?.statusCode ||
+                    (context as any).response?.status,
                 },
-                proxyInfo: (context as any).proxyInfo ? {
-                  url: (context as any).proxyInfo.url,
-                  hostname: (context as any).proxyInfo.hostname,
-                  countryCode: (context as any).proxyInfo.countryCode,
-                } : undefined,
-                session: (context as any).session ? {
-                  errorScore: (context as any).session.errorScore,
-                  usageCount: (context as any).session.usageCount,
-                } : undefined,
+                proxyInfo: (context as any).proxyInfo
+                  ? {
+                      url: (context as any).proxyInfo.url,
+                      hostname: (context as any).proxyInfo.hostname,
+                      countryCode: (context as any).proxyInfo.countryCode,
+                    }
+                  : undefined,
+                session: (context as any).session
+                  ? {
+                      errorScore: (context as any).session.errorScore,
+                      usageCount: (context as any).session.usageCount,
+                    }
+                  : undefined,
                 crawler: {
                   constructor: { name: crawlerType },
                 },
@@ -318,7 +335,7 @@ export class FetchBrain {
               },
               config.telemetry
             );
-            
+
             if (telemetry) {
               telemetryBuffer.add(telemetry);
             }
@@ -350,7 +367,7 @@ export class FetchBrain {
               config.telemetry,
               err instanceof Error ? err : new Error(String(err))
             );
-            
+
             if (telemetry) {
               telemetryBuffer.add(telemetry);
             }
@@ -367,15 +384,15 @@ export class FetchBrain {
 
     // Replace the handler
     const crawlerAny = crawler as any;
-    if ('requestHandler' in crawlerAny) {
+    if ("requestHandler" in crawlerAny) {
       crawlerAny.requestHandler = wrappedHandler;
     }
-    if ('userDefinedRequestHandler' in crawlerAny) {
+    if ("userDefinedRequestHandler" in crawlerAny) {
       crawlerAny.userDefinedRequestHandler = wrappedHandler;
     }
 
     // Wrap the run method to flush telemetry when crawl completes
-    if (typeof crawlerAny.run === 'function') {
+    if (typeof crawlerAny.run === "function") {
       const originalRun = crawlerAny.run.bind(crawlerAny);
       crawlerAny.run = async (...args: unknown[]) => {
         try {
@@ -384,7 +401,7 @@ export class FetchBrain {
         } finally {
           // Flush telemetry buffer when crawl completes
           if (config.telemetry?.enabled) {
-            logger.debug('Telemetry: flushing on crawl complete');
+            logger.debug("Telemetry: flushing on crawl complete");
             await telemetryBuffer.stop();
           }
         }
@@ -392,7 +409,9 @@ export class FetchBrain {
     }
 
     // Attach client for direct access
-    return Object.assign(crawler as object, { fetchBrain: client }) as T & { fetchBrain: FetchBrainClient };
+    return Object.assign(crawler as object, { fetchBrain: client }) as T & {
+      fetchBrain: FetchBrainClient;
+    };
   }
 }
 
@@ -407,27 +426,29 @@ export function createFetchBrain(config: FetchBrainConfig): FetchBrain {
  * Dataset interface for pushData wrapper
  */
 interface DatasetLike {
-  pushData: (data: Record<string, unknown> | Record<string, unknown>[]) => Promise<void>;
+  pushData: (
+    data: Record<string, unknown> | Record<string, unknown>[]
+  ) => Promise<void>;
   open?: (name?: string | null) => Promise<DatasetLike>;
 }
 
 /**
  * AI-aware pushData wrapper
- * 
+ *
  * Use this instead of Dataset.pushData() for automatic AI learning.
  * Works with both static Dataset class and dataset instances.
- * 
+ *
  * @example
  * ```typescript
  * import { Dataset } from 'crawlee';
  * import { pushData } from '@fetchbrain/sdk';
- * 
+ *
  * // Default dataset:
  * await pushData(data, Dataset);
- * 
+ *
  * // Named dataset (opens automatically):
  * await pushData(data, Dataset, 'products');
- * 
+ *
  * // Pre-opened dataset instance:
  * const myDataset = await Dataset.open('products');
  * await pushData(data, myDataset);
@@ -439,7 +460,7 @@ export async function pushData(
   datasetName?: string
 ): Promise<void> {
   const ctx = getCurrentContext();
-  
+
   // Learn if we're in a FetchBrain-enhanced request and AI doesn't already know
   if (ctx && ctx.learning && !ctx.aiKnown) {
     // Handle both single object and array
@@ -448,7 +469,7 @@ export async function pushData(
       await ctx.client.learn(ctx.url, item);
     }
   }
-  
+
   // Open named dataset if name provided and dataset has open method
   if (datasetName && dataset.open) {
     const namedDataset = await dataset.open(datasetName);
