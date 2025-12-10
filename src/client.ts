@@ -6,17 +6,16 @@ import type {
   LearnResponse,
   StatsResponse,
   AIResult,
-  IntelligenceLevel,
   Logger,
   TelemetryData,
   TelemetryRequest,
   TelemetryResponse,
-} from './types';
-import { CircuitBreaker } from './circuit-breaker';
-import { RequestBatcher } from './batch';
-import { createLogger } from './logger';
+} from "./types";
+import { CircuitBreaker } from "./circuit-breaker";
+import { RequestBatcher } from "./batch";
+import { createLogger } from "./logger";
 
-const DEFAULT_BASE_URL = 'https://api.fetchbrain.com';
+const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
 
 /**
@@ -41,15 +40,15 @@ export function clearScrapeContext(): void {
 
 /**
  * FetchBrain API Client
- * 
+ *
  * Handles all communication with the FetchBrain API including:
  * - Request batching for high concurrency
  * - Circuit breaker for graceful degradation
  * - Automatic retries and timeouts
  */
 export class FetchBrainClient {
-  private config: Required<Omit<FetchBrainConfig, 'extractForLearning'>> & 
-    Pick<FetchBrainConfig, 'extractForLearning'>;
+  private config: Required<Omit<FetchBrainConfig, "extractForLearning">> &
+    Pick<FetchBrainConfig, "extractForLearning">;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
   private logger: Logger;
@@ -58,7 +57,7 @@ export class FetchBrainClient {
     this.config = {
       apiKey: config.apiKey,
       baseUrl: config.baseUrl || DEFAULT_BASE_URL,
-      intelligence: config.intelligence || 'high',
+      intelligence: config.intelligence || "high",
       learning: config.learning ?? true,
       alwaysRun: config.alwaysRun ?? false,
       strictBuildMatch: config.strictBuildMatch ?? false,
@@ -68,13 +67,10 @@ export class FetchBrainClient {
       telemetry: config.telemetry ?? { enabled: true },
     };
 
-    this.logger = createLogger(
-      this.config.debug ? 'debug' : 'info',
-      true
-    );
+    this.logger = createLogger(this.config.debug ? "debug" : "info", true);
 
     this.circuitBreaker = new CircuitBreaker({}, this.logger);
-    
+
     this.batcher = new RequestBatcher(
       (urls) => this.executeBatchQuery(urls),
       {},
@@ -106,37 +102,44 @@ export class FetchBrainClient {
   async queryBulk(urls: string[]): Promise<Map<string, AIResult>> {
     if (this.circuitBreaker.isOpen()) {
       this.logger.debug(`Circuit open, skipping bulk query`);
-      return new Map(urls.map(url => [url, { known: false, fallback: true }]));
+      return new Map(
+        urls.map((url) => [url, { known: false, fallback: true }])
+      );
     }
 
     try {
       return await this.executeBatchQuery(urls);
     } catch (error) {
       this.logger.debug(`Bulk query failed:`, error);
-      return new Map(urls.map(url => [url, { known: false, fallback: true }]));
+      return new Map(
+        urls.map((url) => [url, { known: false, fallback: true }])
+      );
     }
   }
 
   /**
    * "Teach" FetchBrain new data
    */
-  async learn(url: string, data: Record<string, unknown>): Promise<LearnResponse> {
+  async learn(
+    url: string,
+    data: Record<string, unknown>
+  ): Promise<LearnResponse> {
     if (!this.config.learning) {
-      return { status: 'rejected', learned: 0 };
+      return { status: "rejected", learned: 0 };
     }
 
     if (this.circuitBreaker.isOpen()) {
       this.logger.debug(`Circuit open, skipping learn for: ${url}`);
-      return { status: 'rejected', learned: 0 };
+      return { status: "rejected", learned: 0 };
     }
 
     try {
-      const extractedData = this.config.extractForLearning 
+      const extractedData = this.config.extractForLearning
         ? this.config.extractForLearning(data)
         : data;
 
-      const response = await this.makeRequest<LearnResponse>('/v1/learn', {
-        method: 'POST',
+      const response = await this.makeRequest<LearnResponse>("/v1/learn", {
+        method: "POST",
         body: JSON.stringify({
           entries: [{ url, data: extractedData }],
         } satisfies LearnRequest),
@@ -148,7 +151,7 @@ export class FetchBrainClient {
     } catch (error) {
       this.circuitBreaker.recordFailure();
       this.logger.warn(`Learn failed for ${url}:`, error);
-      return { status: 'rejected', learned: 0 };
+      return { status: "rejected", learned: 0 };
     }
   }
 
@@ -161,14 +164,14 @@ export class FetchBrainClient {
     }
 
     try {
-      const response = await this.makeRequest<StatsResponse>('/v1/stats', {
-        method: 'GET',
+      const response = await this.makeRequest<StatsResponse>("/v1/stats", {
+        method: "GET",
       });
       this.circuitBreaker.recordSuccess();
       return response;
     } catch (error) {
       this.circuitBreaker.recordFailure();
-      this.logger.warn('Stats request failed:', error);
+      this.logger.warn("Stats request failed:", error);
       return null;
     }
   }
@@ -176,7 +179,9 @@ export class FetchBrainClient {
   /**
    * Execute a batch query against the API
    */
-  private async executeBatchQuery(urls: string[]): Promise<Map<string, AIResult>> {
+  private async executeBatchQuery(
+    urls: string[]
+  ): Promise<Map<string, AIResult>> {
     const results = new Map<string, AIResult>();
 
     // Build query request
@@ -184,15 +189,15 @@ export class FetchBrainClient {
       urls,
       intelligence: this.config.intelligence,
     };
-    
+
     // If strictBuildMatch is enabled, include current build to filter results
     if (this.config.strictBuildMatch && process.env.APIFY_ACTOR_BUILD_ID) {
       request.build = process.env.APIFY_ACTOR_BUILD_ID;
     }
 
     try {
-      const response = await this.makeRequest<QueryResponse>('/v1/query', {
-        method: 'POST',
+      const response = await this.makeRequest<QueryResponse>("/v1/query", {
+        method: "POST",
         body: JSON.stringify(request),
       });
 
@@ -224,47 +229,47 @@ export class FetchBrainClient {
    */
   private async makeRequest<T>(path: string, options: RequestInit): Promise<T> {
     const url = `${this.config.baseUrl}${path}`;
-    
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
 
     // Build context headers
     const contextHeaders: Record<string, string> = {
-      'X-FB-SDK': 'js',
-      'X-FB-Node': process.version || 'unknown',
-      'X-FB-Platform': process.platform || 'unknown',
+      "X-FB-SDK": "js",
+      "X-FB-Node": process.version || "unknown",
+      "X-FB-Platform": process.platform || "unknown",
     };
-    
+
     // Environment
     if (process.env.NODE_ENV) {
-      contextHeaders['X-FB-Env'] = process.env.NODE_ENV;
+      contextHeaders["X-FB-Env"] = process.env.NODE_ENV;
     }
-    
+
     // Apify context (auto-detected from environment)
     if (process.env.APIFY_ACTOR_ID) {
-      contextHeaders['X-FB-Apify'] = process.env.APIFY_ACTOR_ID;
+      contextHeaders["X-FB-Apify"] = process.env.APIFY_ACTOR_ID;
     }
     if (process.env.APIFY_ACTOR_BUILD_ID) {
-      contextHeaders['X-FB-Build'] = process.env.APIFY_ACTOR_BUILD_ID;
+      contextHeaders["X-FB-Build"] = process.env.APIFY_ACTOR_BUILD_ID;
     }
     if (process.env.APIFY_ACTOR_RUN_ID) {
-      contextHeaders['X-FB-Apify-Run'] = process.env.APIFY_ACTOR_RUN_ID;
+      contextHeaders["X-FB-Apify-Run"] = process.env.APIFY_ACTOR_RUN_ID;
     }
-    
+
     // Scrape context
     if (currentContext.crawler) {
-      contextHeaders['X-FB-Crawler'] = currentContext.crawler;
+      contextHeaders["X-FB-Crawler"] = currentContext.crawler;
     }
     if (currentContext.label) {
-      contextHeaders['X-FB-Label'] = currentContext.label;
+      contextHeaders["X-FB-Label"] = currentContext.label;
     }
 
     try {
       const response = await fetch(url, {
         ...options,
         headers: {
-          'Authorization': `Bearer ${this.config.apiKey}`,
-          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.config.apiKey}`,
+          "Content-Type": "application/json",
           ...contextHeaders,
           ...options.headers,
         },
@@ -275,7 +280,7 @@ export class FetchBrainClient {
         throw new Error(`API error: ${response.status} ${response.statusText}`);
       }
 
-      return await response.json() as T;
+      return (await response.json()) as T;
     } finally {
       clearTimeout(timeoutId);
     }
@@ -319,8 +324,8 @@ export class FetchBrainClient {
     }
 
     try {
-      await this.makeRequest<TelemetryResponse>('/v1/telemetry', {
-        method: 'POST',
+      await this.makeRequest<TelemetryResponse>("/v1/telemetry", {
+        method: "POST",
         body: JSON.stringify({ entries } satisfies TelemetryRequest),
       });
     } catch {
