@@ -61,6 +61,7 @@
     {
       "group": "Advanced",
       "pages": [
+        "docs/advanced/batching",
         "docs/advanced/graceful-degradation",
         "docs/advanced/testing",
         "docs/advanced/examples"
