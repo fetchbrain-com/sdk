@@ -1,0 +1,76 @@
+---
+title: Request Batching
+description: "Automatic request batching for high-concurrency scrapers"
+---
+
+## Overview
+
+FetchBrain automatically batches individual URL queries into bulk API calls to reduce connections and improve performance for high-concurrency scrapers.
+
+## How It Works
+
+When running multiple concurrent requests, the SDK:
+
+1. Queues individual URL queries
+2. Waits for a short window (10ms)
+3. Sends all queued URLs in a single API request
+4. Returns results to each caller
+
+```
+Concurrent requests:  URL1, URL2, URL3, URL4, URL5
+                           ↓
+Batched into:         [URL1, URL2, URL3, URL4, URL5]
+                           ↓
+Single API call:      POST /v1/query { urls: [...] }
+                           ↓
+Results distributed:  Result1, Result2, Result3...
+```
+
+## Benefits
+
+- **Fewer connections** - 100 concurrent URLs → 1-2 API calls instead of 100
+- **Lower latency** - Reduced connection overhead
+- **Better throughput** - Optimized for high-concurrency crawlers like Crawlee
+
+## Automatic Behavior
+
+Batching is **enabled by default** when using `FetchBrain.enhance()`. No configuration needed.
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import { CheerioCrawler } from "crawlee";
+
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, pushData }) => {
+      await pushData({ title: $("h1").text() });
+    },
+  }),
+  { apiKey: process.env.FETCHBRAIN_API_KEY }
+);
+
+// Batching happens automatically for concurrent requests
+await crawler.run(urls); // 100 URLs → ~2 API calls
+```
+
+## API Support
+
+The `/v1/query` API endpoint accepts multiple URLs in a single request:
+
+- Maximum **100 URLs** per request
+- Returns `known` and `unknown` arrays
+- Billable per recognized URL
+
+## When Batching Helps
+
+| Scenario                 | Batching Effect       |
+| ------------------------ | --------------------- |
+| High-concurrency crawler | ✅ Major improvement  |
+| Parallel requests        | ✅ Requests grouped   |
+| Sequential requests      | ⏸️ No benefit         |
+| Single queries           | ⏸️ No batching needed |
+
+## See Also
+
+- [FetchBrain.enhance](/docs/sdk/enhance) - Main SDK wrapper
+- [Graceful Degradation](/docs/advanced/graceful-degradation) - Circuit breaker
