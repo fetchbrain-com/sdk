@@ -1,0 +1,81 @@
+---
+title: Installation
+description: "Install FetchBrain SDK in your project"
+---
+
+## Requirements
+
+- Node.js 18+
+- TypeScript 5+ (recommended)
+- Crawlee 3+ (optional, for enhanced crawler)
+
+## Install via Package Manager
+
+<CodeGroup>
+```bash npm
+npm install @fetchbrain.com/sdk
+```
+
+```bash yarn
+yarn add @fetchbrain.com/sdk
+```
+
+```bash pnpm
+pnpm add @fetchbrain.com/sdk
+```
+
+</CodeGroup>
+
+## TypeScript Setup
+
+The SDK is fully typed. No additional `@types` packages needed.
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import type { FetchBrainConfig, QueryResult } from "@fetchbrain.com/sdk";
+```
+
+## Environment Variables
+
+We recommend storing your API key in environment variables:
+
+```bash .env
+FETCHBRAIN_API_KEY=fb_live_your_api_key_here
+```
+
+Then use it in your code:
+
+```typescript
+const ai = new FetchBrain({
+  apiKey: process.env.FETCHBRAIN_API_KEY!,
+});
+```
+
+## Verify Installation
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+
+const ai = new FetchBrain({
+  apiKey: process.env.FETCHBRAIN_API_KEY!,
+});
+
+// Test connection
+const stats = await ai.stats();
+console.log("Connected! Usage:", stats);
+```
+
+## Peer Dependencies
+
+If using with Crawlee, install it separately:
+
+```bash
+npm install crawlee
+```
+
+The SDK works with:
+
+- `CheerioCrawler`
+- `PlaywrightCrawler`
+- `PuppeteerCrawler`
+- Any Crawlee-compatible crawler

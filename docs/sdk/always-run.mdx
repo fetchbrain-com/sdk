@@ -1,0 +1,98 @@
+---
+title: Always Run Mode
+description: "Control which handlers run when AI knows the page"
+---
+
+## Overview
+
+By default, when the AI knows a page, your handler is skipped to save time. The `alwaysRun` option lets you control this behavior.
+
+## Values
+
+| Value                     | Behavior                              |
+| ------------------------- | ------------------------------------- |
+| `false` (default)         | Skip all handlers when AI knows       |
+| `true`                    | Always run all handlers               |
+| `'listing'`               | Only run handler with label 'listing' |
+| `['listing', 'category']` | Run handlers with these labels        |
+
+## Usage
+
+```typescript
+// Skip all handlers when AI knows (default)
+FetchBrain.enhance(crawler, { alwaysRun: false });
+
+// Always run all handlers
+FetchBrain.enhance(crawler, { alwaysRun: true });
+
+// Only run 'listing' handler
+FetchBrain.enhance(crawler, { alwaysRun: "listing" });
+
+// Run multiple specific handlers
+FetchBrain.enhance(crawler, { alwaysRun: ["listing", "category"] });
+```
+
+## With Router
+
+When using Crawlee's router with labeled handlers:
+
+```typescript
+import { createCheerioRouter } from "crawlee";
+
+const router = createCheerioRouter();
+
+router.addHandler("listing", async ({ $, pushData }) => {
+  // Listing page - always run to find new products
+  const links = $("a.product")
+    .map((_, el) => $(el).attr("href"))
+    .get();
+  await pushData({ type: "listing", links });
+});
+
+router.addHandler("detail", async ({ $, pushData }) => {
+  // Detail page - can skip if AI knows
+  await pushData({ title: $("h1").text() });
+});
+
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({ requestHandler: router }),
+  {
+    apiKey: process.env.FETCHBRAIN_API_KEY,
+    // Always run listings (to find new products), skip details when known
+    alwaysRun: "listing",
+  }
+);
+```
+
+## Use Cases
+
+### Full scraping with AI comparison
+
+Set `alwaysRun: true` to always scrape, but compare with AI data:
+
+```typescript
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, ai, pushData }) => {
+      const fresh = { title: $("h1").text() };
+
+      if (ai?.known && JSON.stringify(fresh) === JSON.stringify(ai.data)) {
+        console.log("Data unchanged");
+      } else {
+        console.log("New or changed data");
+        await pushData(fresh);
+      }
+    },
+  }),
+  { alwaysRun: true }
+);
+```
+
+### Discovery vs Detail pattern
+
+```typescript
+const crawler = FetchBrain.enhance(crawler, {
+  // Run discovery handlers, skip detail when AI knows
+  alwaysRun: ["listing", "category", "search"],
+});
+```

@@ -1,0 +1,79 @@
+---
+title: Graceful Degradation
+description: "Circuit breaker ensures your scraper never fails"
+---
+
+## Overview
+
+FetchBrain includes a built-in circuit breaker that ensures your scraper continues even if the AI API is unavailable.
+
+## How It Works
+
+```
+API Healthy     → Normal operation with AI optimization
+API Slow (>500ms) → Timeout, continue without AI
+API Down        → Circuit opens, scraper runs standalone
+API Recovers    → Circuit closes, AI optimization resumes
+```
+
+<Note>
+  Your scraper will **never fail** due to FetchBrain issues. The SDK is designed
+  for production reliability.
+</Note>
+
+## States
+
+| State         | Behavior                                         |
+| ------------- | ------------------------------------------------ |
+| **Closed**    | Normal operation, all requests go through AI     |
+| **Open**      | Circuit tripped, bypass AI, run scraper directly |
+| **Half-Open** | Testing if API recovered, partial requests       |
+
+## Timeout Configuration
+
+```typescript
+const crawler = FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  timeout: 500, // ms, default
+});
+```
+
+If the AI doesn't respond within the timeout, the SDK:
+
+1. Skips the AI query for this request
+2. Runs your handler normally
+3. Increments the failure counter
+
+After 5 consecutive failures, the circuit opens.
+
+## Circuit Breaker Settings
+
+The default circuit breaker:
+
+- Opens after 5 consecutive failures
+- Stays open for 30 seconds
+- Tests with 1 request in half-open state
+
+These defaults are optimized for production use and cannot be overridden.
+
+## Monitoring
+
+Enable debug logging to see circuit state:
+
+```typescript
+const crawler = FetchBrain.enhance(crawler, {
+  debug: true,
+});
+
+// Logs:
+// [FetchBrain] Circuit OPEN - bypassing AI
+// [FetchBrain] Circuit HALF-OPEN - testing...
+// [FetchBrain] Circuit CLOSED - AI online
+```
+
+## Best Practices
+
+1. **Always set a timeout** - The default 500ms is good for most cases
+2. **Use learning mode** - Even when circuit is open, pages are queued for learning
+3. **Monitor stats** - Check `stats()` for recognition rates
+4. **Log errors** - Enable debug mode in staging to catch issues early

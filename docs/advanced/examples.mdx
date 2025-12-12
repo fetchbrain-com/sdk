@@ -1,0 +1,143 @@
+---
+title: Examples
+description: "Complete working examples"
+---
+
+## Basic CheerioCrawler
+
+Simple product scraper with FetchBrain:
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import { CheerioCrawler, Dataset } from "crawlee";
+
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, request, pushData }) => {
+      const product = {
+        url: request.url,
+        title: $("h1.product-title").text().trim(),
+        price: $(".price").text().trim(),
+        description: $(".description").text().trim(),
+        inStock: $(".stock-status").text().includes("In Stock"),
+      };
+
+      await pushData(product);
+    },
+  }),
+  {
+    apiKey: process.env.FETCHBRAIN_API_KEY!,
+    intelligence: "high",
+  }
+);
+
+await crawler.run([
+  "https://example.com/product/1",
+  "https://example.com/product/2",
+  "https://example.com/product/3",
+]);
+
+console.log(`Scraped ${await Dataset.getData()}`);
+```
+
+## PlaywrightCrawler
+
+For JavaScript-heavy sites:
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import { PlaywrightCrawler } from "crawlee";
+
+const crawler = FetchBrain.enhance(
+  new PlaywrightCrawler({
+    requestHandler: async ({ page, request, pushData }) => {
+      // Wait for dynamic content
+      await page.waitForSelector(".product-info");
+
+      const data = await page.evaluate(() => ({
+        title: document.querySelector("h1")?.textContent,
+        price: document.querySelector(".price")?.textContent,
+      }));
+
+      await pushData(data);
+    },
+  }),
+  {
+    apiKey: process.env.FETCHBRAIN_API_KEY!,
+  }
+);
+
+await crawler.run(["https://spa-example.com/products"]);
+```
+
+## Router Pattern
+
+Multiple handlers for different page types:
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import { CheerioCrawler, createCheerioRouter } from "crawlee";
+
+const router = createCheerioRouter();
+
+router.addHandler("listing", async ({ $, enqueueLinks }) => {
+  // Discovery - always run to find new products
+  await enqueueLinks({
+    selector: "a.product-link",
+    label: "detail",
+  });
+});
+
+router.addHandler("detail", async ({ $, pushData }) => {
+  // Detail - skip if AI knows
+  await pushData({
+    title: $("h1").text(),
+    price: $(".price").text(),
+  });
+});
+
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({ requestHandler: router }),
+  {
+    apiKey: process.env.FETCHBRAIN_API_KEY!,
+    alwaysRun: "listing", // Always discover, skip known details
+  }
+);
+
+await crawler.run([
+  { url: "https://shop.com/category/electronics", label: "listing" },
+]);
+```
+
+## Manual API
+
+Without Crawlee:
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+
+const ai = new FetchBrain({
+  apiKey: process.env.FETCHBRAIN_API_KEY!,
+});
+
+async function scrapeProduct(url: string) {
+  // 1. Check AI first
+  const aiResult = await ai.query({ url });
+
+  if (aiResult.known) {
+    console.log("Using AI data");
+    return aiResult.data;
+  }
+
+  // 2. Fetch if unknown
+  console.log("Fetching fresh...");
+  const res = await fetch(url);
+  const html = await res.text();
+  const data = parseProduct(html);
+
+  // 3. Teach AI
+  await ai.learn({ url, data });
+
+  return data;
+}
+```

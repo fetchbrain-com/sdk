@@ -1,0 +1,102 @@
+---
+title: Stats Endpoint
+description: "Get your usage statistics"
+openapi: "GET /v1/stats"
+---
+
+## Endpoint
+
+```http
+GET https://api.fetchbrain.com/v1/stats
+```
+
+## Request
+
+No query parameters required. Uses the current billing period by default.
+
+## Response
+
+```json
+{
+  "period": "2025-01",
+  "recognized": 45230,
+  "unknown": 1523,
+  "learned": 1523,
+  "recognitionRate": 0.967,
+  "tier": "pro",
+  "limit": 500000,
+  "used": 45230,
+  "remaining": 454770
+}
+```
+
+## Response Fields
+
+| Field             | Type   | Description                      |
+| ----------------- | ------ | -------------------------------- |
+| `period`          | string | Current billing period (YYYY-MM) |
+| `recognized`      | number | Successful AI queries (billable) |
+| `unknown`         | number | URLs AI didn't know              |
+| `learned`         | number | Pages taught to AI               |
+| `recognitionRate` | number | Success ratio (0-1)              |
+| `tier`            | string | Current plan tier                |
+| `limit`           | number | Plan's included queries          |
+| `used`            | number | Queries used this period         |
+| `remaining`       | number | Queries remaining                |
+
+## Examples
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.fetchbrain.com/v1/stats" \
+  -H "Authorization: Bearer fb_live_your_api_key"
+```
+
+```javascript JavaScript
+const response = await fetch("https://api.fetchbrain.com/v1/stats", {
+  headers: {
+    Authorization: `Bearer ${process.env.FETCHBRAIN_API_KEY}`,
+  },
+});
+
+const stats = await response.json();
+console.log(`Recognition rate: ${(stats.recognitionRate * 100).toFixed(1)}%`);
+console.log(`Used: ${stats.used} / ${stats.limit}`);
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "https://api.fetchbrain.com/v1/stats",
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+
+stats = response.json()
+print(f"Recognition rate: {stats['recognitionRate'] * 100:.1f}%")
+print(f"Remaining: {stats['remaining']}")
+```
+
+</CodeGroup>
+
+## Monitoring
+
+Use the stats endpoint to:
+
+- Monitor recognition rates
+- Track usage against limits
+- Set up alerts for overages
+- Identify optimization opportunities
+
+```javascript
+// Example: Alert if recognition rate drops
+const stats = await ai.stats();
+
+if (stats.recognitionRate < 0.8) {
+  console.warn("Low recognition rate - check if data changed");
+}
+
+if (stats.remaining < 10000) {
+  console.warn("Approaching query limit");
+}
+```

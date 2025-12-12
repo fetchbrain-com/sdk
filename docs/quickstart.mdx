@@ -1,0 +1,87 @@
+---
+title: Quickstart
+description: "Get up and running with FetchBrain in 5 minutes"
+---
+
+## 1. Install the SDK
+
+<CodeGroup>
+```bash npm
+npm install @fetchbrain.com/sdk
+```
+
+```bash yarn
+yarn add @fetchbrain.com/sdk
+```
+
+```bash pnpm
+pnpm add @fetchbrain.com/sdk
+```
+
+</CodeGroup>
+
+## 2. Get Your API Key
+
+1. Sign up at [fetchbrain.com](https://fetchbrain.com/signup)
+2. Go to [Dashboard → API Keys](https://fetchbrain.com/dashboard/keys)
+3. Create a new API key
+
+## 3. Wrap Your Crawler
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import { CheerioCrawler } from "crawlee";
+
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, request, pushData }) => {
+      // This only runs when AI needs to "learn" (new page)
+      const data = {
+        title: $("h1").text(),
+        price: $(".price").text(),
+      };
+      await pushData(data);
+    },
+  }),
+  {
+    apiKey: process.env.FETCHBRAIN_API_KEY,
+    intelligence: "high",
+    learning: true,
+  }
+);
+
+await crawler.run(urls);
+```
+
+## 4. Run Your Scraper
+
+```bash
+FETCHBRAIN_API_KEY=fb_live_your_key npx ts-node scraper.ts
+```
+
+That's it! 🎉 Your scraper now:
+
+- ✅ Queries AI before each request
+- ✅ Skips HTTP when AI knows the data
+- ✅ Automatically teaches AI new pages
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card
+    title="Intelligence Levels"
+    icon="brain"
+    href="/sdk/intelligence-levels"
+  >
+    Configure AI confidence thresholds
+  </Card>
+  <Card title="AI Context" icon="sparkles" href="/sdk/ai-context">
+    Access AI data in your handler
+  </Card>
+  <Card title="Always Run Mode" icon="play" href="/sdk/always-run">
+    Control which handlers run
+  </Card>
+  <Card title="Manual API" icon="terminal" href="/sdk/manual-api">
+    Use without Crawlee
+  </Card>
+</CardGroup>

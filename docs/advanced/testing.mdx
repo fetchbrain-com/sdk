@@ -1,0 +1,94 @@
+---
+title: Testing
+description: "Unit testing with MockFetchBrain"
+---
+
+## Overview
+
+The SDK includes a mock client for unit testing without hitting the production API.
+
+## MockFetchBrain
+
+```typescript
+import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
+
+const mock = new MockFetchBrain({
+  initialKnowledge: new Map([
+    ["https://example.com/product/1", { title: "Known Product" }],
+    ["https://example.com/product/2", { title: "Another Product" }],
+  ]),
+});
+
+// Use in tests
+const result = await mock.query("https://example.com/product/1");
+expect(result.known).toBe(true);
+expect(result.data.title).toBe("Known Product");
+```
+
+## With Jest
+
+```typescript
+import { FetchBrain, MockFetchBrain } from "@fetchbrain.com/sdk";
+
+jest.mock("@fetchbrain.com/sdk", () => ({
+  ...jest.requireActual("@fetchbrain.com/sdk"),
+  FetchBrain: jest.fn().mockImplementation(() => new MockFetchBrain()),
+}));
+
+describe("My Scraper", () => {
+  it("uses AI data when known", async () => {
+    const mock = new MockFetchBrain({
+      initialKnowledge: new Map([["https://example.com", { title: "Test" }]]),
+    });
+
+    const result = await mock.query({ url: "https://example.com" });
+    expect(result.known).toBe(true);
+  });
+
+  it("returns unknown for new URLs", async () => {
+    const mock = new MockFetchBrain();
+
+    const result = await mock.query({ url: "https://newsite.com" });
+    expect(result.known).toBe(false);
+  });
+});
+```
+
+## Mock Server
+
+For integration testing, use the mock server:
+
+```bash
+# Start mock server
+npm run mock-server
+```
+
+Then point your code to localhost:
+
+```typescript
+const ai = new FetchBrain({
+  apiKey: "test_local_key",
+  baseUrl: "http://localhost:3456",
+});
+```
+
+The mock server:
+
+- Stores knowledge in memory
+- Responds instantly
+- Resets on restart
+
+## Local Development
+
+Set up a `.env.test` file:
+
+```bash
+FETCHBRAIN_API_KEY=test_key
+FETCHBRAIN_BASE_URL=http://localhost:3456
+```
+
+Then run tests:
+
+```bash
+npm test
+```

@@ -1,0 +1,88 @@
+---
+title: Authentication
+description: "How to authenticate API requests"
+---
+
+## API Keys
+
+All API requests require authentication via an API key.
+
+## Getting Your Key
+
+1. Sign up at [fetchbrain.com](https://fetchbrain.com/signup)
+2. Go to [Dashboard → API Keys](https://fetchbrain.com/dashboard/keys)
+3. Click "Create API Key"
+4. Copy the key (it won't be shown again)
+
+## Key Format
+
+API keys use the format:
+
+```
+fb_<environment>_<random>
+```
+
+| Prefix     | Environment     |
+| ---------- | --------------- |
+| `fb_live_` | Production      |
+| `fb_test_` | Testing/staging |
+
+## Using Your Key
+
+Include the key in the `Authorization` header:
+
+```http
+Authorization: Bearer fb_live_abc123xyz...
+```
+
+### cURL Example
+
+```bash
+curl -X GET "https://api.fetchbrain.com/v1/stats" \
+  -H "Authorization: Bearer fb_live_your_api_key"
+```
+
+### JavaScript Example
+
+```javascript
+const response = await fetch("https://api.fetchbrain.com/v1/stats", {
+  headers: {
+    Authorization: `Bearer ${process.env.FETCHBRAIN_API_KEY}`,
+  },
+});
+```
+
+### Python Example
+
+```python
+import requests
+
+headers = {
+    "Authorization": f"Bearer {os.environ['FETCHBRAIN_API_KEY']}"
+}
+
+response = requests.get(
+    "https://api.fetchbrain.com/v1/stats",
+    headers=headers
+)
+```
+
+## Security Best Practices
+
+<Warning>
+  Never expose your API key in client-side code or public repositories.
+</Warning>
+
+1. **Use environment variables** - Store keys in `.env` files
+2. **Never commit keys** - Add `.env` to `.gitignore`
+3. **Rotate regularly** - Create new keys periodically
+4. **Revoke leaked keys** - Delete compromised keys immediately
+
+## Managing Keys
+
+From the dashboard, you can:
+
+- Create new keys
+- View key usage
+- Delete/revoke keys
+- Set key labels for organization

@@ -1,0 +1,100 @@
+---
+title: Query Endpoint
+description: "Check if the AI knows a URL"
+openapi: "GET /v1/query"
+---
+
+## Endpoint
+
+```http
+GET https://api.fetchbrain.com/v1/query
+```
+
+## Query Parameters
+
+<ParamField query="url" type="string" required>
+  The URL to check
+</ParamField>
+
+<ParamField query="intelligence" type="string" default="high">
+  Intelligence level: `realtime`, `high`, `standard`, or `deep`
+</ParamField>
+
+## Response
+
+### Recognized (AI knows the URL)
+
+```json
+{
+  "status": "recognized",
+  "known": true,
+  "confidence": 0.95,
+  "data": {
+    "title": "Product Name",
+    "price": "$99.99"
+  },
+  "learnedAt": "2025-01-15T10:00:00Z"
+}
+```
+
+### Unknown (AI doesn't know)
+
+```json
+{
+  "status": "unknown",
+  "known": false,
+  "message": "URL not recognized. Consider teaching via POST /learn"
+}
+```
+
+## Response Fields
+
+| Field        | Type    | Description                     |
+| ------------ | ------- | ------------------------------- |
+| `status`     | string  | `recognized` or `unknown`       |
+| `known`      | boolean | Whether AI knows this URL       |
+| `confidence` | number  | Confidence score 0-1 (if known) |
+| `data`       | object  | Known data (if recognized)      |
+| `learnedAt`  | string  | ISO timestamp (if known)        |
+
+## Examples
+
+<CodeGroup>
+```bash cURL
+curl -X GET "https://api.fetchbrain.com/v1/query?url=https://example.com/product/123" \
+  -H "Authorization: Bearer fb_live_your_api_key"
+```
+
+```javascript JavaScript
+const response = await fetch(
+  "https://api.fetchbrain.com/v1/query?url=https://example.com/product/123",
+  {
+    headers: {
+      Authorization: `Bearer ${process.env.FETCHBRAIN_API_KEY}`,
+    },
+  }
+);
+
+const result = await response.json();
+
+if (result.known) {
+  console.log("AI data:", result.data);
+} else {
+  console.log("Need to scrape");
+}
+```
+
+```python Python
+import requests
+
+response = requests.get(
+    "https://api.fetchbrain.com/v1/query",
+    params={"url": "https://example.com/product/123"},
+    headers={"Authorization": f"Bearer {API_KEY}"}
+)
+
+result = response.json()
+print(f"Known: {result['known']}")
+```
+
+</CodeGroup>

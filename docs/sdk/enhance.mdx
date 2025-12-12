@@ -1,0 +1,95 @@
+---
+title: FetchBrain.enhance
+description: "Wrap a Crawlee crawler with AI optimization"
+---
+
+## Overview
+
+`FetchBrain.enhance()` wraps any Crawlee crawler with AI-powered optimization. Your crawler works exactly the same, but now queries the AI before each request.
+
+## Basic Usage
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+import { CheerioCrawler } from "crawlee";
+
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, pushData }) => {
+      await pushData({ title: $("h1").text() });
+    },
+  }),
+  {
+    apiKey: process.env.FETCHBRAIN_API_KEY,
+  }
+);
+
+await crawler.run(urls);
+```
+
+## Configuration
+
+```typescript
+interface FetchBrainConfig {
+  // Required
+  apiKey: string;
+
+  // Optional
+  baseUrl?: string; // API URL (default: production)
+  intelligence?: IntelligenceLevel; // AI accuracy level
+  learning?: boolean; // Enable AI learning (default: true)
+  alwaysRun?: boolean | string | string[]; // Which handlers to run
+  timeout?: number; // Request timeout in ms (default: 500)
+  debug?: boolean; // Enable debug logging
+}
+```
+
+## Parameters
+
+<ParamField body="apiKey" type="string" required>
+  Your FetchBrain API key from the dashboard
+</ParamField>
+
+<ParamField body="intelligence" type="string" default="high">
+  AI accuracy level: `realtime`, `high`, `standard`, or `deep`
+</ParamField>
+
+<ParamField body="learning" type="boolean" default="true">
+  Whether to teach the AI new pages after scraping
+</ParamField>
+
+<ParamField body="alwaysRun" type="boolean | string | string[]" default="false">
+  Control which handlers run when AI knows the page
+</ParamField>
+
+<ParamField body="timeout" type="number" default="500">
+  Timeout in milliseconds for AI queries
+</ParamField>
+
+<ParamField body="debug" type="boolean" default="false">
+  Enable debug logging to console
+</ParamField>
+
+## Supported Crawlers
+
+| Crawler             | Status             |
+| ------------------- | ------------------ |
+| `CheerioCrawler`    | ✅ Fully supported |
+| `PlaywrightCrawler` | ✅ Fully supported |
+| `PuppeteerCrawler`  | ✅ Fully supported |
+| `HttpCrawler`       | ✅ Fully supported |
+| Custom crawlers     | 🔧 Via manual API  |
+
+## How It Works
+
+When you call `crawler.run(urls)`:
+
+1. SDK intercepts each request before it's made
+2. Queries AI: "Do you know this URL?"
+3. **If AI knows**: Returns known data, skips HTTP request
+4. **If AI doesn't know**: Runs your handler, then teaches the AI
+
+```
+Request → AI Query → Known? → Skip HTTP → Return AI Data
+                   → Unknown? → Run Handler → Teach AI
+```
