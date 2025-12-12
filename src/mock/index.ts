@@ -1,15 +1,15 @@
 /**
  * Mock FetchBrain for unit testing
- * 
+ *
  * Use this to create a mock client that doesn't make real API calls.
  */
 
-import type { 
-  AIResult, 
-  LearnResponse, 
+import type {
+  AIResult,
+  LearnResponse,
   StatsResponse,
   FetchBrainConfig,
-} from '../types';
+} from "../types";
 
 export interface MockFetchBrainOptions {
   /** Pre-trained AI knowledge */
@@ -26,7 +26,10 @@ export interface MockFetchBrainOptions {
  * Mock FetchBrain client for testing
  */
 export class MockFetchBrain {
-  private knowledge: Map<string, { data: Record<string, unknown>; learnedAt: string }>;
+  private knowledge: Map<
+    string,
+    { data: Record<string, unknown>; learnedAt: string }
+  >;
   private options: MockFetchBrainOptions;
   private _stats = { queries: 0, recognized: 0, learned: 0 };
 
@@ -49,7 +52,7 @@ export class MockFetchBrain {
 
   private async simulateLatency(): Promise<void> {
     if (this.options.latency && this.options.latency > 0) {
-      await new Promise(resolve => setTimeout(resolve, this.options.latency));
+      await new Promise((resolve) => setTimeout(resolve, this.options.latency));
     }
   }
 
@@ -60,9 +63,9 @@ export class MockFetchBrain {
 
   async query(url: string): Promise<AIResult> {
     await this.simulateLatency();
-    
+
     if (this.shouldFail()) {
-      throw new Error('Simulated API failure');
+      throw new Error("Simulated API failure");
     }
 
     this._stats.queries++;
@@ -74,7 +77,6 @@ export class MockFetchBrain {
         known: true,
         data: known.data,
         confidence: 0.97,
-        learnedAt: known.learnedAt,
       };
     }
 
@@ -83,26 +85,29 @@ export class MockFetchBrain {
 
   async queryBulk(urls: string[]): Promise<Map<string, AIResult>> {
     const results = new Map<string, AIResult>();
-    
+
     for (const url of urls) {
       results.set(url, await this.query(url));
     }
-    
+
     return results;
   }
 
-  async learn(url: string, data: Record<string, unknown>): Promise<LearnResponse> {
+  async learn(
+    url: string,
+    data: Record<string, unknown>
+  ): Promise<LearnResponse> {
     await this.simulateLatency();
-    
+
     if (this.shouldFail()) {
-      throw new Error('Simulated API failure');
+      throw new Error("Simulated API failure");
     }
 
     this.knowledge.set(url, { data, learnedAt: new Date().toISOString() });
     this._stats.learned++;
 
     return {
-      status: 'accepted',
+      status: "accepted",
       learned: 1,
       verification: {
         schemaValid: true,
@@ -117,7 +122,10 @@ export class MockFetchBrain {
     return {
       queries: this._stats.queries,
       recognized: this._stats.recognized,
-      recognitionRate: this._stats.queries > 0 ? this._stats.recognized / this._stats.queries : 0,
+      recognitionRate:
+        this._stats.queries > 0
+          ? this._stats.recognized / this._stats.queries
+          : 0,
       learned: this._stats.learned,
       period: new Date().toISOString().slice(0, 7),
     };
@@ -128,9 +136,9 @@ export class MockFetchBrain {
    */
   seed(entries: Array<{ url: string; data: Record<string, unknown> }>): void {
     for (const entry of entries) {
-      this.knowledge.set(entry.url, { 
-        data: entry.data, 
-        learnedAt: new Date().toISOString() 
+      this.knowledge.set(entry.url, {
+        data: entry.data,
+        learnedAt: new Date().toISOString(),
       });
     }
   }
@@ -161,11 +169,13 @@ export class MockFetchBrain {
 /**
  * Create a mock configuration for testing
  */
-export function createMockConfig(overrides: Partial<FetchBrainConfig> = {}): FetchBrainConfig {
+export function createMockConfig(
+  overrides: Partial<FetchBrainConfig> = {}
+): FetchBrainConfig {
   return {
-    apiKey: 'test_mock_key',
-    baseUrl: 'http://localhost:3456',
-    intelligence: 'high',
+    apiKey: "test_mock_key",
+    baseUrl: "http://localhost:3456",
+    intelligence: "high",
     learning: true,
     timeout: 5000,
     debug: false,
