@@ -1,11 +1,11 @@
 /**
  * FetchBrain SDK Types
- * 
+ *
  * Type definitions for the FetchBrain AI-powered scraping optimization SDK.
  */
 
 /** Intelligence level for AI inference accuracy */
-export type IntelligenceLevel = 'realtime' | 'high' | 'standard' | 'deep';
+export type IntelligenceLevel = "realtime" | "high" | "standard" | "deep";
 
 /** AI memory depth levels - deeper memory may have minor hallucinations */
 export enum AIMemoryDepth {
@@ -19,44 +19,44 @@ export enum AIMemoryDepth {
 export interface FetchBrainConfig {
   /** API key for authentication */
   apiKey: string;
-  
+
   /** Base URL for API (defaults to production) */
   baseUrl?: string;
-  
+
   /** Intelligence level for AI responses */
   intelligence?: IntelligenceLevel;
-  
+
   /** Whether AI should learn from new pages */
   learning?: boolean;
-  
-  /** 
+
+  /**
    * Control which handlers run when AI knows the page.
    * - false: Auto-skip all handlers when AI knows (default)
    * - true: Always run all handlers
    * - string[]: Only run handlers with these labels (e.g., ['listing', 'category'])
    * - 'default': Only run the default handler
-   * 
+   *
    * AI data always available via context.ai
    */
   alwaysRun?: boolean | string | string[];
-  
+
   /** Custom data extractor for learning */
   extractForLearning?: (data: unknown) => Record<string, unknown>;
-  
-  /** 
-   * If true, only return cached data from the same build version.
+
+  /**
+   * If true, only return recognized data from the same build version.
    * When a scraper updates, it will re-scrape instead of using stale data.
    * Uses APIFY_ACTOR_BUILD_ID environment variable.
    * Default: false
    */
   strictBuildMatch?: boolean;
-  
+
   /** Request timeout in ms (default: 500ms for fast degradation) */
   timeout?: number;
-  
+
   /** Enable debug logging */
   debug?: boolean;
-  
+
   /**
    * Telemetry configuration - opt-in anonymous data sharing
    * Helps improve proxy recommendations, detect blocks, optimize configs
@@ -100,7 +100,7 @@ export interface LearnRequest {
 
 /** Learn response from the API */
 export interface LearnResponse {
-  status: 'accepted' | 'rejected' | 'flagged';
+  status: "accepted" | "rejected" | "flagged";
   learned: number;
   verification?: {
     schemaValid: boolean;
@@ -125,11 +125,11 @@ export interface AIResult {
   data?: Record<string, unknown>;
   confidence?: number;
   // Note: No learnedAt - API returns pure AI response
-  fallback?: boolean;  // True if circuit breaker triggered fallback
+  fallback?: boolean; // True if circuit breaker triggered fallback
 }
 
 /** Circuit breaker states */
-export type CircuitState = 'closed' | 'open' | 'half-open';
+export type CircuitState = "closed" | "open" | "half-open";
 
 /** Circuit breaker configuration */
 export interface CircuitBreakerConfig {
@@ -159,7 +159,7 @@ export interface FetchBrainState {
 }
 
 /** Log levels */
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 /** Logger interface */
 export interface Logger {
@@ -179,13 +179,13 @@ export interface Logger {
 export interface TelemetryConfig {
   /** Enable telemetry collection (default: false) */
   enabled: boolean;
-  
+
   /** Share performance metrics: response times, retries, status codes */
   sharePerformance?: boolean;
-  
+
   /** Share proxy info: country, type (never IP addresses) */
   shareProxyInfo?: boolean;
-  
+
   /** Share site patterns: block rates, rate limits detected */
   shareSitePatterns?: boolean;
 }
@@ -196,37 +196,37 @@ export interface TelemetryConfig {
  */
 export interface TelemetryData {
   // Request identification (hashed, not raw)
-  domain: string;              // e.g., "walmart.com"
-  urlHash: string;             // SHA256 of full URL
-  urlPattern?: string;         // e.g., "/ip/*" (generalized path)
-  
+  domain: string; // e.g., "walmart.com"
+  urlHash: string; // SHA256 of full URL
+  urlPattern?: string; // e.g., "/ip/*" (generalized path)
+
   // Performance metrics
-  responseTimeMs?: number;     // Time to first byte
-  totalTimeMs?: number;        // Total request time
-  statusCode?: number;         // HTTP status
-  contentSize?: number;        // Response size in bytes
-  retryCount?: number;         // Number of retries for this request
-  
+  responseTimeMs?: number; // Time to first byte
+  totalTimeMs?: number; // Total request time
+  statusCode?: number; // HTTP status
+  contentSize?: number; // Response size in bytes
+  retryCount?: number; // Number of retries for this request
+
   // Proxy information (anonymized)
-  proxyCountry?: string;       // e.g., "US"
-  proxyType?: string;          // "datacenter" | "residential" | "mobile"
-  proxySuccess?: boolean;      // Did this proxy work?
-  
+  proxyCountry?: string; // e.g., "US"
+  proxyType?: string; // "datacenter" | "residential" | "mobile"
+  proxySuccess?: boolean; // Did this proxy work?
+
   // Session state (aggregates only)
-  sessionAge?: number;         // Requests in current session
-  sessionErrorScore?: number;  // Error rate 0-1
-  cookieCount?: number;        // Number of cookies (not values)
-  
+  sessionAge?: number; // Requests in current session
+  sessionErrorScore?: number; // Error rate 0-1
+  cookieCount?: number; // Number of cookies (not values)
+
   // Blocking indicators
-  blocked?: boolean;           // Request was blocked
-  blockType?: string;          // "captcha" | "403" | "429" | "timeout"
-  
+  blocked?: boolean; // Request was blocked
+  blockType?: string; // "captcha" | "403" | "429" | "timeout"
+
   // Crawler metadata
-  crawlerType?: string;        // "cheerio" | "playwright" | "puppeteer"
-  requestLabel?: string;       // Developer-defined label
-  
+  crawlerType?: string; // "cheerio" | "playwright" | "puppeteer"
+  requestLabel?: string; // Developer-defined label
+
   // Timestamps
-  timestamp: string;           // ISO timestamp
+  timestamp: string; // ISO timestamp
 }
 
 /**
@@ -241,5 +241,5 @@ export interface TelemetryRequest {
  */
 export interface TelemetryResponse {
   received: number;
-  status: 'success' | 'partial' | 'error';
+  status: "success" | "partial" | "error";
 }
