@@ -1,0 +1,67 @@
+---
+title: API Overview
+description: "Direct HTTP API for any programming language"
+---
+
+## Base URL
+
+```
+https://api.fetchbrain.com/v1
+```
+
+## Authentication
+
+All requests must include your API key in the Authorization header:
+
+```http
+Authorization: Bearer fb_live_your_api_key
+```
+
+Get your API key from [Dashboard → API Keys](https://fetchbrain.com/dashboard/keys).
+
+## Endpoints
+
+| Method | Endpoint    | Description             |
+| ------ | ----------- | ----------------------- |
+| GET    | `/v1/query` | Check if AI knows a URL |
+| POST   | `/v1/learn` | Teach AI about a URL    |
+| GET    | `/v1/stats` | Get usage statistics    |
+
+## Rate Limits
+
+| Plan     | Requests/minute | Burst |
+| -------- | --------------- | ----- |
+| Free     | 60              | 100   |
+| Starter  | 120             | 200   |
+| Pro      | 300             | 500   |
+| Business | 600             | 1000  |
+| Scale    | 1200            | 2000  |
+
+## Error Responses
+
+All errors return JSON:
+
+```json
+{
+  "error": "Invalid API key",
+  "code": "UNAUTHORIZED"
+}
+```
+
+| Code           | HTTP Status | Description                |
+| -------------- | ----------- | -------------------------- |
+| `UNAUTHORIZED` | 401         | Invalid or missing API key |
+| `RATE_LIMITED` | 429         | Rate limit exceeded        |
+| `BAD_REQUEST`  | 400         | Invalid request parameters |
+| `SERVER_ERROR` | 500         | Internal server error      |
+
+## SDKs
+
+<CardGroup cols={2}>
+  <Card title="Node.js SDK" icon="node-js" href="/quickstart">
+    Official SDK with Crawlee integration
+  </Card>
+  <Card title="Manual Integration" icon="code" href="/sdk/manual-api">
+    Use the API directly in any language
+  </Card>
+</CardGroup>

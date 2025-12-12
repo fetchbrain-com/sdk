@@ -1,0 +1,122 @@
+---
+title: Manual API
+description: "Use FetchBrain without Crawlee"
+---
+
+## Overview
+
+For custom integrations or non-Crawlee scrapers, use the FetchBrain class directly.
+
+## Basic Usage
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+
+const ai = new FetchBrain({
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  intelligence: "high",
+});
+
+// Check if AI knows a URL
+const result = await ai.query({ url: "https://example.com/product/123" });
+
+if (result.known) {
+  console.log("AI knows:", result.data);
+  console.log("Confidence:", result.confidence);
+} else {
+  // Fetch and teach
+  const data = await scrapeUrl("https://example.com/product/123");
+  await ai.learn({ url: "https://example.com/product/123", data });
+}
+```
+
+## Methods
+
+### `query(options)`
+
+Check if the AI knows a URL.
+
+```typescript
+const result = await ai.query({
+  url: "https://example.com/product/123",
+  intelligence: "high", // Optional, overrides default
+});
+```
+
+**Returns:**
+
+```typescript
+interface QueryResult {
+  known: boolean;
+  data?: object;
+  confidence?: number;
+  learnedAt?: string;
+}
+```
+
+### `learn(options)`
+
+Teach the AI about a URL.
+
+```typescript
+await ai.learn({
+  url: "https://example.com/product/123",
+  data: { title: "Product Name", price: 99.99 },
+});
+```
+
+### `stats()`
+
+Get your usage statistics.
+
+```typescript
+const stats = await ai.stats();
+console.log(stats);
+// {
+//   recognized: 45230,
+//   unknown: 1523,
+//   learned: 1523,
+//   recognitionRate: 0.967
+// }
+```
+
+## Full Example
+
+```typescript
+import { FetchBrain } from "@fetchbrain.com/sdk";
+
+async function main() {
+  const ai = new FetchBrain({
+    apiKey: process.env.FETCHBRAIN_API_KEY!,
+  });
+
+  const urls = [
+    "https://example.com/product/1",
+    "https://example.com/product/2",
+    "https://example.com/product/3",
+  ];
+
+  for (const url of urls) {
+    const result = await ai.query({ url });
+
+    if (result.known) {
+      console.log(`✓ AI knows ${url}:`, result.data);
+    } else {
+      console.log(`→ Fetching ${url}...`);
+
+      // Your custom fetch logic
+      const response = await fetch(url);
+      const html = await response.text();
+      const data = parseProduct(html);
+
+      // Teach the AI
+      await ai.learn({ url, data });
+      console.log(`✓ Taught AI about ${url}`);
+    }
+  }
+
+  // Check stats
+  const stats = await ai.stats();
+  console.log("Recognition rate:", stats.recognitionRate);
+}
+```

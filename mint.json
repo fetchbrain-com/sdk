@@ -1,0 +1,84 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "FetchBrain",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#7C3AED",
+    "light": "#A78BFA",
+    "dark": "#5B21B6",
+    "anchors": {
+      "from": "#7C3AED",
+      "to": "#EC4899"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "Dashboard",
+      "url": "https://fetchbrain.com/dashboard"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "https://fetchbrain.com/signup"
+  },
+  "tabs": [
+    {
+      "name": "API Reference",
+      "url": "docs/api-reference"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/fetchbrain-com/sdk"
+    },
+    {
+      "name": "NPM",
+      "icon": "npm",
+      "url": "https://www.npmjs.com/package/@fetchbrain.com/sdk"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": ["docs/introduction", "docs/quickstart", "docs/installation"]
+    },
+    {
+      "group": "SDK Guide",
+      "pages": [
+        "docs/sdk/enhance",
+        "docs/sdk/intelligence-levels",
+        "docs/sdk/ai-context",
+        "docs/sdk/always-run",
+        "docs/sdk/manual-api"
+      ]
+    },
+    {
+      "group": "Advanced",
+      "pages": [
+        "docs/advanced/graceful-degradation",
+        "docs/advanced/testing",
+        "docs/advanced/examples"
+      ]
+    },
+    {
+      "group": "API Reference",
+      "pages": [
+        "docs/api-reference/overview",
+        "docs/api-reference/authentication",
+        "docs/api-reference/endpoints/query",
+        "docs/api-reference/endpoints/learn",
+        "docs/api-reference/endpoints/stats"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "twitter": "https://twitter.com/fetchbrain",
+    "github": "https://github.com/fetchbrain-com"
+  }
+}

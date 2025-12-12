@@ -1,0 +1,71 @@
+---
+title: Intelligence Levels
+description: "Configure AI confidence thresholds"
+---
+
+## Overview
+
+Intelligence levels control the AI's confidence threshold for returning known data vs suggesting a fresh scrape.
+
+## Available Levels
+
+| Level      | Description                         | Best For                        |
+| ---------- | ----------------------------------- | ------------------------------- |
+| `realtime` | Live AI inference, highest accuracy | Critical data, real-time prices |
+| `high`     | High confidence responses (default) | Most use cases                  |
+| `standard` | Balanced accuracy and speed         | High-volume scraping            |
+| `deep`     | Deep knowledge, broader coverage    | Historical data                 |
+
+## Usage
+
+```typescript
+const crawler = FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  intelligence: "high", // Default
+});
+```
+
+## Choosing the Right Level
+
+### `realtime`
+
+- Highest accuracy, may be slower
+- Best for: stock prices, inventory levels, time-sensitive data
+- Trade-off: Lower recognition rate
+
+### `high` (Recommended)
+
+- High confidence threshold
+- Best for: product pages, articles, general scraping
+- Trade-off: Good balance of speed and accuracy
+
+### `standard`
+
+- Balanced accuracy and speed
+- Best for: large-scale scraping, less critical data
+- Trade-off: May return slightly stale data
+
+### `deep`
+
+- Broader knowledge coverage
+- Best for: historical data, archive scraping
+- Trade-off: May include older versions
+
+## Example
+
+```typescript
+// High-frequency price monitoring
+const priceMonitor = FetchBrain.enhance(crawler, {
+  intelligence: "realtime",
+});
+
+// General product catalog
+const catalogScraper = FetchBrain.enhance(crawler, {
+  intelligence: "high",
+});
+
+// Archive scraping
+const archiveScraper = FetchBrain.enhance(crawler, {
+  intelligence: "deep",
+});
+```

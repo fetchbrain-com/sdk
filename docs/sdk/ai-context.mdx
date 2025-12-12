@@ -1,0 +1,98 @@
+---
+title: AI Context
+description: "Access AI data directly in your request handler"
+---
+
+## Overview
+
+When using `FetchBrain.enhance()`, your request handler receives an `ai` property in the context with information about what the AI knows.
+
+## Usage
+
+```typescript
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({
+    requestHandler: async ({ $, request, ai, pushData }) => {
+      // Check if AI already knows this page
+      if (ai?.known && ai.confidence! > 0.9) {
+        console.log("AI knows this page with high confidence");
+
+        // Option 1: Use AI data directly (skip scraping)
+        await ai.useAIData();
+        return;
+
+        // Option 2: Compare AI data with scraped data
+        // const scraped = { title: $('h1').text() };
+        // console.log('AI:', ai.data, 'Scraped:', scraped);
+      }
+
+      // Scrape normally if AI doesn't know
+      const data = { title: $("h1").text() };
+      await pushData(data);
+    },
+  }),
+  { apiKey: "your-api-key", alwaysRun: true }
+);
+```
+
+<Note>
+  To access `ai` in your handler, set `alwaysRun: true`. Otherwise, the handler
+  is skipped when AI knows the page.
+</Note>
+
+## AI Context Properties
+
+<ParamField body="known" type="boolean">
+  Whether the AI knows this URL
+</ParamField>
+
+<ParamField body="data" type="object">
+  The AI's known data (if recognized)
+</ParamField>
+
+<ParamField body="confidence" type="number">
+  Confidence score from 0 to 1
+</ParamField>
+
+<ParamField body="learnedAt" type="string">
+  ISO timestamp of when the AI learned this page
+</ParamField>
+
+<ParamField body="useAIData" type="() => Promise<void>">
+  Helper function to push AI data and skip scraping
+</ParamField>
+
+## Use Cases
+
+### Skip scraping when AI knows
+
+```typescript
+if (ai?.known) {
+  await ai.useAIData();
+  return;
+}
+```
+
+### Verify AI data
+
+```typescript
+if (ai?.known) {
+  const scraped = { title: $("h1").text() };
+  if (scraped.title !== ai.data.title) {
+    console.log("Data changed! Updating AI...");
+    await pushData(scraped);
+  }
+}
+```
+
+### Conditional scraping based on confidence
+
+```typescript
+if (ai?.known && ai.confidence! > 0.95) {
+  // Very high confidence, trust AI
+  await ai.useAIData();
+} else {
+  // Lower confidence or unknown, scrape fresh
+  await pushData({ title: $("h1").text() });
+}
+```

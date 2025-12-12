@@ -1,0 +1,73 @@
+---
+title: Introduction
+description: "The AI That Already Knows The Web - AI-powered scraping optimization"
+---
+
+# Welcome to FetchBrain
+
+FetchBrain uses a neural network continuously trained on millions of web pages. **Ask first → Get instant results.** AI doesn't know? → We fetch & learn for next time.
+
+<img
+  className="block dark:hidden"
+  src="/images/hero-light.svg"
+  alt="FetchBrain Hero"
+/>
+<img
+  className="hidden dark:block"
+  src="/images/hero-dark.svg"
+  alt="FetchBrain Hero"
+/>
+
+## How It Works
+
+```
+Your Scraper → FetchBrain SDK → AI knows? → YES → Return AI knowledge (skip request)
+                              → NO  → Run scraper → AI learns for next time
+```
+
+1. **Before each request**, FetchBrain queries the AI if it "knows" the URL
+2. **AI knows**: Return data instantly from neural inference, skip HTTP request
+3. **AI learning**: Run your scraper normally, then teach the AI
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Instant Results" icon="bolt">
+    Skip redundant HTTP requests with pre-trained knowledge
+  </Card>
+  <Card title="Auto-Learning" icon="brain">
+    AI automatically learns from scraped pages
+  </Card>
+  <Card title="Graceful Degradation" icon="shield-check">
+    Circuit breaker ensures your scraper never fails
+  </Card>
+  <Card title="Crawlee Compatible" icon="plug">
+    Works with CheerioCrawler, PlaywrightCrawler, and more
+  </Card>
+</CardGroup>
+
+## Pricing Model
+
+<Note>
+  **You only pay for what works.** Learning is always free - you only pay when
+  the AI successfully returns known data.
+</Note>
+
+| Plan               | Included Queries | Overage  |
+| ------------------ | ---------------- | -------- |
+| Free               | 10K              | -        |
+| Starter ($19/mo)   | 100K             | $0.05/1K |
+| Pro ($49/mo)       | 500K             | $0.05/1K |
+| Business ($149/mo) | 2M               | $0.05/1K |
+| Scale ($349/mo)    | 10M              | $0.05/1K |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes
+  </Card>
+  <Card title="API Reference" icon="code" href="/api-reference/overview">
+    Direct HTTP API for any language
+  </Card>
+</CardGroup>
