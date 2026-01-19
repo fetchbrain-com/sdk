@@ -12,11 +12,12 @@ import type {
   TelemetryResponse,
 } from "./types";
 import { CircuitBreaker } from "./circuit-breaker";
-import { RequestBatcher } from "./batch";
+import { RequestBatcher, LearnBatcher } from "./batch";
 import { createLogger } from "./logger";
 
 const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
+const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
 
 /**
  * Scrape context sent with API requests
@@ -47,10 +48,19 @@ export function clearScrapeContext(): void {
  * - Automatic retries and timeouts
  */
 export class FetchBrainClient {
-  private config: Required<Omit<FetchBrainConfig, "extractForLearning">> &
-    Pick<FetchBrainConfig, "extractForLearning">;
+  private config: Required<
+    Omit<
+      FetchBrainConfig,
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker"
+    >
+  > &
+    Pick<
+      FetchBrainConfig,
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker"
+    >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
+  private learnBatcher: LearnBatcher;
   private logger: Logger;
 
   constructor(config: FetchBrainConfig) {
@@ -60,21 +70,33 @@ export class FetchBrainClient {
       intelligence: config.intelligence || "high",
       learning: config.learning ?? true,
       alwaysRun: config.alwaysRun ?? false,
-      strictBuildMatch: config.strictBuildMatch ?? false,
+      refreshOnRebuild: config.refreshOnRebuild ?? false,
       timeout: config.timeout || DEFAULT_TIMEOUT,
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,
+      learnUrlField: config.learnUrlField,
       telemetry: config.telemetry ?? { enabled: true },
+      batch: config.batch,
+      circuitBreaker: config.circuitBreaker,
     };
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);
 
-    this.circuitBreaker = new CircuitBreaker({}, this.logger);
+    this.circuitBreaker = new CircuitBreaker(
+      this.config.circuitBreaker,
+      this.logger,
+    );
 
     this.batcher = new RequestBatcher(
       (urls) => this.executeBatchQuery(urls),
-      {},
-      this.logger
+      this.config.batch,
+      this.logger,
+    );
+
+    this.learnBatcher = new LearnBatcher(
+      (entries) => this.executeBatchLearn(entries),
+      this.config.batch,
+      this.logger,
     );
   }
 
@@ -103,7 +125,7 @@ export class FetchBrainClient {
     if (this.circuitBreaker.isOpen()) {
       this.logger.debug(`Circuit open, skipping bulk query`);
       return new Map(
-        urls.map((url) => [url, { known: false, fallback: true }])
+        urls.map((url) => [url, { known: false, fallback: true }]),
       );
     }
 
@@ -112,17 +134,17 @@ export class FetchBrainClient {
     } catch (error) {
       this.logger.debug(`Bulk query failed:`, error);
       return new Map(
-        urls.map((url) => [url, { known: false, fallback: true }])
+        urls.map((url) => [url, { known: false, fallback: true }]),
       );
     }
   }
 
   /**
-   * "Teach" FetchBrain new data
+   * "Teach" FetchBrain new data (batched for high-concurrency)
    */
   async learn(
     url: string,
-    data: Record<string, unknown>
+    data: Record<string, unknown>,
   ): Promise<LearnResponse> {
     if (!this.config.learning) {
       return { status: "rejected", learned: 0 };
@@ -134,22 +156,11 @@ export class FetchBrainClient {
     }
 
     try {
-      const extractedData = this.config.extractForLearning
-        ? this.config.extractForLearning(data)
-        : data;
-
-      const response = await this.makeRequest<LearnResponse>("/v1/learn", {
-        method: "POST",
-        body: JSON.stringify({
-          entries: [{ url, data: extractedData }],
-        } satisfies LearnRequest),
-      });
-
-      this.circuitBreaker.recordSuccess();
+      // Use batcher for high-concurrency support
+      const response = await this.learnBatcher.learn(url, data);
       this.logger.debug(`Learned data for: ${url}`);
       return response;
     } catch (error) {
-      this.circuitBreaker.recordFailure();
       this.logger.warn(`Learn failed for ${url}:`, error);
       return { status: "rejected", learned: 0 };
     }
@@ -180,7 +191,7 @@ export class FetchBrainClient {
    * Execute a batch query against the API
    */
   private async executeBatchQuery(
-    urls: string[]
+    urls: string[],
   ): Promise<Map<string, AIResult>> {
     const results = new Map<string, AIResult>();
 
@@ -190,8 +201,8 @@ export class FetchBrainClient {
       intelligence: this.config.intelligence,
     };
 
-    // If strictBuildMatch is enabled, include current build to filter results
-    if (this.config.strictBuildMatch && process.env.APIFY_ACTOR_BUILD_ID) {
+    // If refreshOnRebuild is enabled, include current build to filter results
+    if (this.config.refreshOnRebuild && process.env.APIFY_ACTOR_BUILD_ID) {
       request.build = process.env.APIFY_ACTOR_BUILD_ID;
     }
 
@@ -225,13 +236,55 @@ export class FetchBrainClient {
   }
 
   /**
+   * Execute a batch learn against the API
+   */
+  private async executeBatchLearn(
+    entries: Array<{ url: string; data: Record<string, unknown> }>,
+  ): Promise<LearnResponse> {
+    // Apply extractForLearning to all entries
+    const processedEntries = entries.map((entry) => ({
+      url: entry.url,
+      data: this.config.extractForLearning
+        ? this.config.extractForLearning(entry.data)
+        : entry.data,
+    }));
+
+    try {
+      const response = await this.makeRequest<LearnResponse>(
+        "/v1/learn",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            entries: processedEntries,
+          } satisfies LearnRequest),
+        },
+        DEFAULT_LEARN_TIMEOUT,
+      );
+
+      this.circuitBreaker.recordSuccess();
+      this.logger.debug(`Batch learned ${entries.length} entries`);
+      return response;
+    } catch (error) {
+      this.circuitBreaker.recordFailure();
+      throw error;
+    }
+  }
+
+  /**
    * Make an HTTP request to the API
    */
-  private async makeRequest<T>(path: string, options: RequestInit): Promise<T> {
+  private async makeRequest<T>(
+    path: string,
+    options: RequestInit,
+    timeout?: number,
+  ): Promise<T> {
     const url = `${this.config.baseUrl}${path}`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      timeout ?? this.config.timeout,
+    );
 
     // Build context headers
     const contextHeaders: Record<string, string> = {
@@ -312,6 +365,14 @@ export class FetchBrainClient {
    */
   clearBatch(): void {
     this.batcher.clear();
+    this.learnBatcher.clear();
+  }
+
+  /**
+   * Flush pending learn requests (call before shutdown)
+   */
+  async flushLearnBatch(): Promise<void> {
+    await this.learnBatcher.forceFlush();
   }
 
   /**

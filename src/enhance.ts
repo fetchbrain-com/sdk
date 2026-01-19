@@ -73,7 +73,7 @@ interface RequestHandlerContext {
  */
 function shouldRunHandler(
   alwaysRun: boolean | string | string[] | undefined,
-  label: string | undefined
+  label: string | undefined,
 ): boolean {
   // Default: skip when AI knows
   if (alwaysRun === undefined || alwaysRun === false) {
@@ -151,7 +151,7 @@ export class FetchBrain {
    */
   static enhance<T>(
     crawler: T,
-    config: FetchBrainConfig
+    config: FetchBrainConfig,
   ): T & { fetchBrain: FetchBrainClient } {
     const client = new FetchBrainClient(config);
     const logger = createLogger(config.debug ? "debug" : "info", true);
@@ -167,6 +167,16 @@ export class FetchBrain {
         }
       },
     });
+
+    // Run stats tracking
+    const runStats = {
+      totalRequests: 0,
+      aiKnown: 0,
+      aiSkipped: 0, // AI knew + skipped scraping
+      learned: 0,
+      scraped: 0, // Actually ran handler
+      startTime: 0,
+    };
 
     // Get original request handler
     const originalHandler =
@@ -189,6 +199,9 @@ export class FetchBrain {
       const url = request.url;
       const label = request.label;
       const startTime = Date.now();
+
+      // Track request
+      runStats.totalRequests++;
 
       // Set scrape context for API calls
       setScrapeContext({
@@ -217,7 +230,7 @@ export class FetchBrain {
               logger.info(
                 `Used AI data: ${url} (confidence: ${
                   aiResult.confidence?.toFixed(2) || "N/A"
-                })`
+                })`,
               );
             }
           },
@@ -236,10 +249,12 @@ export class FetchBrain {
 
         // 4. Auto-optimization: if AI knows and handler should not run, skip
         if (aiResult.known && aiResult.data && !runHandler) {
+          runStats.aiKnown++;
+          runStats.aiSkipped++;
           logger.info(
-            `Optimized: ${url} [${handlerLabel || "default"}] (confidence: ${
+            `AI known: ${url} [${handlerLabel || "default"}] (confidence: ${
               aiResult.confidence?.toFixed(2) || "N/A"
-            })`
+            })`,
           );
           if (originalPushData) {
             await originalPushData.call(context, aiResult.data);
@@ -248,11 +263,13 @@ export class FetchBrain {
         }
 
         // 5. Run handler (either AI doesn't know, or alwaysRun matches this label)
+        runStats.scraped++;
         if (aiResult.known) {
+          runStats.aiKnown++;
           logger.info(
             `Running handler [${
               handlerLabel || "default"
-            }] with AI data available: ${url}`
+            }] with AI data available: ${url}`,
           );
         } else {
           logger.debug(`Learning: ${url}`);
@@ -270,8 +287,11 @@ export class FetchBrain {
             const shouldLearn = !usedAIData && !aiResult.known;
 
             if (shouldLearn) {
-              const currentUrl = requestContextMap.get(context) || url;
-              await client.learn(currentUrl, data);
+              runStats.learned++;
+              const requestUrl = requestContextMap.get(context) || url;
+
+              // Learn with request URL - this is what gets queried
+              await client.learn(requestUrl, data);
             }
 
             // Continue with normal pushData
@@ -333,7 +353,7 @@ export class FetchBrain {
                 responseTime: Date.now() - startTime,
                 contentSize: (context as any).response?.body?.length,
               },
-              config.telemetry
+              config.telemetry,
             );
 
             if (telemetry) {
@@ -365,7 +385,7 @@ export class FetchBrain {
                 responseTime: Date.now() - startTime,
               },
               config.telemetry,
-              err instanceof Error ? err : new Error(String(err))
+              err instanceof Error ? err : new Error(String(err)),
             );
 
             if (telemetry) {
@@ -391,19 +411,38 @@ export class FetchBrain {
       crawlerAny.userDefinedRequestHandler = wrappedHandler;
     }
 
-    // Wrap the run method to flush telemetry when crawl completes
+    // Wrap the run method to flush telemetry and print summary when crawl completes
     if (typeof crawlerAny.run === "function") {
       const originalRun = crawlerAny.run.bind(crawlerAny);
       crawlerAny.run = async (...args: unknown[]) => {
+        runStats.startTime = Date.now();
         try {
           const result = await originalRun(...args);
           return result;
         } finally {
+          // Flush pending learn requests before shutdown
+          logger.debug("Flushing pending learn requests on crawl complete");
+          await client.flushLearnBatch();
+
           // Flush telemetry buffer when crawl completes
           if (config.telemetry?.enabled) {
             logger.debug("Telemetry: flushing on crawl complete");
             await telemetryBuffer.stop();
           }
+
+          // Print run summary
+          const duration = ((Date.now() - runStats.startTime) / 1000).toFixed(
+            1,
+          );
+          const savingsPercent =
+            runStats.totalRequests > 0
+              ? ((runStats.aiSkipped / runStats.totalRequests) * 100).toFixed(1)
+              : "0";
+
+          logger.info(
+            `Finished! AI known: ${runStats.aiKnown}/${runStats.totalRequests} (${savingsPercent}%), ` +
+              `learned: ${runStats.learned}, scraped: ${runStats.scraped}, duration: ${duration}s`,
+          );
         }
       };
     }
@@ -427,7 +466,7 @@ export function createFetchBrain(config: FetchBrainConfig): FetchBrain {
  */
 interface DatasetLike {
   pushData: (
-    data: Record<string, unknown> | Record<string, unknown>[]
+    data: Record<string, unknown> | Record<string, unknown>[],
   ) => Promise<void>;
   open?: (name?: string | null) => Promise<DatasetLike>;
 }
@@ -457,7 +496,7 @@ interface DatasetLike {
 export async function pushData(
   data: Record<string, unknown> | Record<string, unknown>[],
   dataset: DatasetLike,
-  datasetName?: string
+  datasetName?: string,
 ): Promise<void> {
   const ctx = getCurrentContext();
 

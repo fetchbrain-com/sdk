@@ -49,13 +49,29 @@ export interface FetchBrainConfig {
    * Uses APIFY_ACTOR_BUILD_ID environment variable.
    * Default: false
    */
-  strictBuildMatch?: boolean;
+  refreshOnRebuild?: boolean;
 
   /** Request timeout in ms (default: 500ms for fast degradation) */
   timeout?: number;
 
   /** Enable debug logging */
   debug?: boolean;
+
+  /**
+   * Field name to use as URL for learning
+   * Useful when request URL is an API endpoint but data contains the actual page URL
+   */
+  learnUrlField?: string;
+
+  /**
+   * Batching configuration for high-performance crawling
+   */
+  batch?: Partial<BatchConfig>;
+
+  /**
+   * Circuit breaker configuration for stability
+   */
+  circuitBreaker?: Partial<CircuitBreakerConfig>;
 
   /**
    * Telemetry configuration - opt-in anonymous data sharing

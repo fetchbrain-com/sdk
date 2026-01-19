@@ -41,7 +41,7 @@ const crawler = FetchBrain.enhance(
     apiKey: process.env.FETCHBRAIN_API_KEY,
     intelligence: "high", // High confidence AI responses
     learning: true, // AI learns from scraped pages
-  }
+  },
 );
 
 await crawler.run(urls);
@@ -135,7 +135,7 @@ const crawler = FetchBrain.enhance(
       await pushData(data);
     },
   }),
-  { apiKey: "your-api-key", alwaysRun: true }
+  { apiKey: "your-api-key", alwaysRun: true },
 );
 ```
 
@@ -151,6 +151,8 @@ const crawler = FetchBrain.enhance(
 
 ## Using Dataset.pushData
 
+> ⚠️ **Important**: AI learning **only happens** when you use `context.pushData()` or the SDK's `pushData()` wrapper below. Direct calls to `Dataset.pushData()` **will not trigger learning**, and the AI won't recognize these URLs in future runs.
+
 If you use `Dataset.pushData()` instead of `context.pushData()`, use our wrapper for automatic AI learning:
 
 ```typescript
@@ -162,14 +164,17 @@ const crawler = FetchBrain.enhance(
     requestHandler: async ({ $, request }) => {
       const data = { title: $("h1").text() };
 
-      // Use pushData wrapper for AI learning
+      // ✅ Use pushData wrapper for AI learning
       await pushData(data, Dataset);
 
-      // Or with named dataset
+      // ✅ Or with named dataset
       await pushData(data, Dataset, "products");
+
+      // ❌ This will NOT learn:
+      // await Dataset.pushData(data);
     },
   }),
-  { apiKey: "your-api-key" }
+  { apiKey: "your-api-key" },
 );
 ```
 
