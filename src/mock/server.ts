@@ -53,44 +53,36 @@ app.use((req, res, next) => {
 });
 
 /**
- * POST /v1/query - Check if AI knows the URL
+ * POST /v1/query - Check if AI knows the items
  */
 app.post("/v1/query", (req, res) => {
   const body = req.body as QueryRequest;
-  const { urls } = body;
+  const items = body.items;
 
-  if (!urls || !Array.isArray(urls)) {
-    return res.status(400).json({ error: "urls array is required" });
+  if (!items || !Array.isArray(items)) {
+    return res.status(400).json({ error: "items array is required" });
   }
 
-  stats.queries += urls.length;
+  stats.queries += items.length;
 
   const known: QueryResponse["known"] = [];
   const unknown: string[] = [];
 
-  for (const url of urls) {
-    const aiKnowledge = knowledge.get(url);
-
-    if (aiKnowledge) {
+  for (const item of items) {
+    const k = knowledge.get(item.key);
+    if (k) {
       stats.recognized++;
-      known.push({
-        url,
-        known: true,
-        data: aiKnowledge.data,
-        confidence: 0.95 + Math.random() * 0.04, // 0.95-0.99
-      });
+      known.push({ key: item.key, url: item.url, known: true, data: k.data, confidence: 0.97 });
     } else {
-      unknown.push(url);
+      unknown.push(item.key);
     }
   }
 
-  const response: QueryResponse = { known, unknown };
-
   console.log(
-    `[Query] ${urls.length} URLs → ${known.length} recognized, ${unknown.length} new`
+    `[Query] ${items.length} items → ${known.length} recognized, ${unknown.length} new`
   );
 
-  res.json(response);
+  res.json({ known, unknown } satisfies QueryResponse);
 });
 
 /**
@@ -98,7 +90,7 @@ app.post("/v1/query", (req, res) => {
  */
 app.post("/v1/learn", (req, res) => {
   const body = req.body as LearnRequest;
-  const { entries } = body;
+  const entries = body.entries;
 
   if (!entries || !Array.isArray(entries)) {
     return res.status(400).json({ error: "entries array is required" });
@@ -107,30 +99,16 @@ app.post("/v1/learn", (req, res) => {
   let learned = 0;
 
   for (const entry of entries) {
-    if (entry.url && entry.data) {
-      knowledge.set(entry.url, {
-        data: entry.data,
-        learnedAt: new Date().toISOString(),
-      });
+    if (entry.key && entry.data) {
+      knowledge.set(entry.key, { data: entry.data, learnedAt: new Date().toISOString() });
       learned++;
       stats.learned++;
     }
   }
 
-  const response: LearnResponse = {
-    status: "accepted",
-    learned,
-    verification: {
-      schemaValid: true,
-      valuesValid: true,
-      duplicate: false,
-      warnings: [],
-    },
-  };
+  res.json({ learned, status: "success" } satisfies LearnResponse);
 
   console.log(`[Learn] AI learned ${learned} entries`);
-
-  res.json(response);
 });
 
 /**

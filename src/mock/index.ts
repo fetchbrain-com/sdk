@@ -61,7 +61,7 @@ export class MockFetchBrain {
     return Math.random() < (this.options.failureRate || 0.1);
   }
 
-  async query(url: string): Promise<AIResult> {
+  async query(key: string, _url?: string): Promise<AIResult> {
     await this.simulateLatency();
 
     if (this.shouldFail()) {
@@ -69,7 +69,7 @@ export class MockFetchBrain {
     }
 
     this._stats.queries++;
-    const known = this.knowledge.get(url);
+    const known = this.knowledge.get(key);
 
     if (known) {
       this._stats.recognized++;
@@ -83,19 +83,20 @@ export class MockFetchBrain {
     return { known: false };
   }
 
-  async queryBulk(urls: string[]): Promise<Map<string, AIResult>> {
+  async queryBulk(items: { key: string; url?: string }[]): Promise<Map<string, AIResult>> {
     const results = new Map<string, AIResult>();
 
-    for (const url of urls) {
-      results.set(url, await this.query(url));
+    for (const { key, url } of items) {
+      results.set(key, await this.query(key, url));
     }
 
     return results;
   }
 
   async learn(
-    url: string,
-    data: Record<string, unknown>
+    key: string,
+    data: Record<string, unknown>,
+    _url?: string,
   ): Promise<LearnResponse> {
     await this.simulateLatency();
 
@@ -103,18 +104,12 @@ export class MockFetchBrain {
       throw new Error("Simulated API failure");
     }
 
-    this.knowledge.set(url, { data, learnedAt: new Date().toISOString() });
+    this.knowledge.set(key, { data, learnedAt: new Date().toISOString() });
     this._stats.learned++;
 
     return {
-      status: "accepted",
       learned: 1,
-      verification: {
-        schemaValid: true,
-        valuesValid: true,
-        duplicate: false,
-        warnings: [],
-      },
+      status: "success",
     };
   }
 
@@ -134,9 +129,9 @@ export class MockFetchBrain {
   /**
    * Seed the AI with test data
    */
-  seed(entries: Array<{ url: string; data: Record<string, unknown> }>): void {
+  seed(entries: Array<{ key: string; data: Record<string, unknown> }>): void {
     for (const entry of entries) {
-      this.knowledge.set(entry.url, {
+      this.knowledge.set(entry.key, {
         data: entry.data,
         learnedAt: new Date().toISOString(),
       });
@@ -159,10 +154,10 @@ export class MockFetchBrain {
   }
 
   /**
-   * Check if AI knows a URL
+   * Check if AI knows a key
    */
-  has(url: string): boolean {
-    return this.knowledge.has(url);
+  has(key: string): boolean {
+    return this.knowledge.has(key);
   }
 }
 

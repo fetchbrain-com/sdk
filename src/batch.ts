@@ -6,12 +6,13 @@ const DEFAULT_CONFIG: BatchConfig = {
 };
 
 interface PendingRequest {
-  url: string;
+  key: string;
+  url?: string;
   resolve: (result: AIResult) => void;
   reject: (error: Error) => void;
 }
 
-type BatchExecutor = (urls: string[]) => Promise<Map<string, AIResult>>;
+type BatchExecutor = (items: { key: string; url?: string }[]) => Promise<Map<string, AIResult>>;
 
 /**
  * Request Batcher
@@ -37,11 +38,11 @@ export class RequestBatcher {
   }
 
   /**
-   * Add a URL to the batch queue
+   * Add a key/url pair to the batch queue
    */
-  async query(url: string): Promise<AIResult> {
+  async query(key: string, url?: string): Promise<AIResult> {
     return new Promise((resolve, reject) => {
-      this.queue.push({ url, resolve, reject });
+      this.queue.push({ key, url, resolve, reject });
 
       // Flush immediately if batch is full
       if (this.queue.length >= this.config.maxSize) {
@@ -73,22 +74,16 @@ export class RequestBatcher {
 
     // Take current queue and reset
     const batch = this.queue.splice(0, this.config.maxSize);
-    const urls = batch.map((r) => r.url);
+    const items = batch.map((r) => ({ key: r.key, url: r.url }));
 
-    this.logger.debug(`Flushing batch of ${urls.length} URLs`);
+    this.logger.debug(`Flushing batch of ${items.length} keys`);
 
     try {
-      const results = await this.executor(urls);
+      const results = await this.executor(items);
 
       // Resolve all pending requests
       for (const request of batch) {
-        const result = results.get(request.url);
-        if (result) {
-          request.resolve(result);
-        } else {
-          // URL not in results = unknown
-          request.resolve({ known: false });
-        }
+        request.resolve(results.get(request.key) ?? { known: false });
       }
     } catch (error) {
       // Reject all pending requests
@@ -134,7 +129,8 @@ export class RequestBatcher {
 // =============================================================================
 
 interface LearnEntry {
-  url: string;
+  key: string;
+  url?: string;
   data: Record<string, unknown>;
 }
 
@@ -173,11 +169,12 @@ export class LearnBatcher {
    * Add a learn entry to the batch queue
    */
   async learn(
-    url: string,
+    key: string,
     data: Record<string, unknown>,
+    url?: string,
   ): Promise<LearnResponse> {
     return new Promise((resolve, reject) => {
-      this.queue.push({ entry: { url, data }, resolve, reject });
+      this.queue.push({ entry: { key, url, data }, resolve, reject });
 
       // Flush immediately if batch is full
       if (this.queue.length >= this.config.maxSize) {

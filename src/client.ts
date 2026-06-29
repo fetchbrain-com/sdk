@@ -88,7 +88,7 @@ export class FetchBrainClient {
     );
 
     this.batcher = new RequestBatcher(
-      (urls) => this.executeBatchQuery(urls),
+      (items) => this.executeBatchQuery(items),
       this.config.batch,
       this.logger,
     );
@@ -101,41 +101,36 @@ export class FetchBrainClient {
   }
 
   /**
-   * Query if FetchBrain "knows" a URL
+   * Query if FetchBrain "knows" a key/url
    */
-  async query(url: string): Promise<AIResult> {
+  async query(key: string, url?: string): Promise<AIResult> {
     // Circuit breaker check
     if (this.circuitBreaker.isOpen()) {
-      this.logger.debug(`Circuit open, skipping query for: ${url}`);
+      this.logger.debug(`Circuit open, skipping query`);
       return { known: false, fallback: true };
     }
 
     try {
-      return await this.batcher.query(url);
+      return await this.batcher.query(key, url);
     } catch (error) {
-      this.logger.debug(`Query failed for ${url}:`, error);
+      this.logger.debug(`Query failed:`, error);
       return { known: false, fallback: true };
     }
   }
 
   /**
-   * Query multiple URLs at once (bypass batcher for bulk operations)
+   * Query multiple items at once (bypass batcher for bulk operations)
    */
-  async queryBulk(urls: string[]): Promise<Map<string, AIResult>> {
+  async queryBulk(items: { key: string; url?: string }[]): Promise<Map<string, AIResult>> {
     if (this.circuitBreaker.isOpen()) {
       this.logger.debug(`Circuit open, skipping bulk query`);
-      return new Map(
-        urls.map((url) => [url, { known: false, fallback: true }]),
-      );
+      return new Map(items.map((i) => [i.key, { known: false, fallback: true }]));
     }
 
     try {
-      return await this.executeBatchQuery(urls);
-    } catch (error) {
-      this.logger.debug(`Bulk query failed:`, error);
-      return new Map(
-        urls.map((url) => [url, { known: false, fallback: true }]),
-      );
+      return await this.executeBatchQuery(items);
+    } catch {
+      return new Map(items.map((i) => [i.key, { known: false, fallback: true }]));
     }
   }
 
@@ -143,25 +138,23 @@ export class FetchBrainClient {
    * "Teach" FetchBrain new data (batched for high-concurrency)
    */
   async learn(
-    url: string,
+    key: string,
     data: Record<string, unknown>,
+    url?: string,
   ): Promise<LearnResponse> {
     if (!this.config.learning) {
       return { status: "rejected", learned: 0 };
     }
 
     if (this.circuitBreaker.isOpen()) {
-      this.logger.debug(`Circuit open, skipping learn for: ${url}`);
+      this.logger.debug(`Circuit open, skipping learn for: ${key}`);
       return { status: "rejected", learned: 0 };
     }
 
     try {
-      // Use batcher for high-concurrency support
-      const response = await this.learnBatcher.learn(url, data);
-      this.logger.debug(`Learned data for: ${url}`);
-      return response;
+      return await this.learnBatcher.learn(key, data, url);
     } catch (error) {
-      this.logger.warn(`Learn failed for ${url}:`, error);
+      this.logger.warn(`Learn failed:`, error);
       return { status: "rejected", learned: 0 };
     }
   }
@@ -191,13 +184,13 @@ export class FetchBrainClient {
    * Execute a batch query against the API
    */
   private async executeBatchQuery(
-    urls: string[],
+    items: { key: string; url?: string }[],
   ): Promise<Map<string, AIResult>> {
     const results = new Map<string, AIResult>();
 
     // Build query request
     const request: QueryRequest = {
-      urls,
+      items,
       intelligence: this.config.intelligence,
     };
 
@@ -214,18 +207,14 @@ export class FetchBrainClient {
 
       this.circuitBreaker.recordSuccess();
 
-      // Process known URLs
+      // Process known items (indexed by key)
       for (const item of response.known) {
-        results.set(item.url, {
-          known: true,
-          data: item.data,
-          confidence: item.confidence,
-        });
+        results.set(item.key, { known: true, data: item.data, confidence: item.confidence });
       }
 
-      // Process unknown URLs
-      for (const url of response.unknown) {
-        results.set(url, { known: false });
+      // Process unknown keys
+      for (const key of response.unknown) {
+        results.set(key, { known: false });
       }
 
       return results;
@@ -239,14 +228,12 @@ export class FetchBrainClient {
    * Execute a batch learn against the API
    */
   private async executeBatchLearn(
-    entries: Array<{ url: string; data: Record<string, unknown> }>,
+    entries: Array<{ key: string; url?: string; data: Record<string, unknown> }>,
   ): Promise<LearnResponse> {
-    // Apply extractForLearning to all entries
-    const processedEntries = entries.map((entry) => ({
-      url: entry.url,
-      data: this.config.extractForLearning
-        ? this.config.extractForLearning(entry.data)
-        : entry.data,
+    const processed = entries.map((e) => ({
+      key: e.key,
+      url: e.url,
+      data: this.config.extractForLearning ? this.config.extractForLearning(e.data) : e.data,
     }));
 
     try {
@@ -254,15 +241,12 @@ export class FetchBrainClient {
         "/v1/learn",
         {
           method: "POST",
-          body: JSON.stringify({
-            entries: processedEntries,
-          } satisfies LearnRequest),
+          body: JSON.stringify({ entries: processed } satisfies LearnRequest),
         },
         DEFAULT_LEARN_TIMEOUT,
       );
 
       this.circuitBreaker.recordSuccess();
-      this.logger.debug(`Batch learned ${entries.length} entries`);
       return response;
     } catch (error) {
       this.circuitBreaker.recordFailure();

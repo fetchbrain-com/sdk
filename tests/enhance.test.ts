@@ -88,7 +88,7 @@ describe("FetchBrain", () => {
 
   describe("learn", () => {
     it("should teach AI new data", async () => {
-      const mockResponse: LearnResponse = { status: "accepted", learned: 1 };
+      const mockResponse: LearnResponse = { learned: 1, status: "success" };
       (__mockLearn as any).mockResolvedValueOnce(mockResponse);
 
       const fb = new FetchBrain(testConfig);
@@ -97,7 +97,7 @@ describe("FetchBrain", () => {
         data: { title: "New Product" },
       });
 
-      expect(result.status).toBe("accepted");
+      expect(result.status).toBe("success");
       expect(result.learned).toBe(1);
     });
   });
@@ -166,7 +166,26 @@ describe("FetchBrain.enhance", () => {
 
       await enhanced.requestHandler(context);
 
-      expect(__mockQuery).toHaveBeenCalledWith("https://example.com/test");
+      expect(__mockQuery).toHaveBeenCalledWith("https://example.com/test", "https://example.com/test");
+    });
+
+    it("should use uniqueKey for query when provided", async () => {
+      (__mockQuery as any).mockResolvedValue({ known: false });
+
+      const crawler = createMockCrawler();
+      const enhanced = FetchBrain.enhance(crawler, testConfig);
+
+      const context = {
+        request: {
+          url: "https://api.example.com/graphql",
+          uniqueKey: "search:nike:page:1",
+        },
+        pushData: vi.fn(),
+      };
+
+      await enhanced.requestHandler(context);
+
+      expect(__mockQuery).toHaveBeenCalledWith("search:nike:page:1", "https://api.example.com/graphql");
     });
 
     it("should skip handler when AI knows and alwaysRun is false", async () => {
@@ -408,8 +427,8 @@ describe("FetchBrain.enhance", () => {
     it("should learn from pushData when AI does not know", async () => {
       (__mockQuery as any).mockResolvedValue({ known: false });
       (__mockLearn as any).mockResolvedValue({
-        status: "accepted",
         learned: 1,
+        status: "success",
       });
 
       const handlerFn = vi.fn(async (ctx) => {
@@ -431,9 +450,7 @@ describe("FetchBrain.enhance", () => {
 
       await enhanced.requestHandler(context);
 
-      expect(__mockLearn).toHaveBeenCalledWith("https://example.com/new", {
-        title: "New Data",
-      });
+      expect(__mockLearn).toHaveBeenCalledWith("https://example.com/new", { title: "New Data" }, "https://example.com/new");
     });
 
     it("should NOT learn when AI already knows", async () => {

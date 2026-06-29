@@ -13,6 +13,7 @@ import { collectTelemetry, TelemetryBuffer } from "./telemetry";
  * This allows Dataset.pushData interception even when called statically
  */
 interface RequestContext {
+  key: string;
   url: string;
   client: FetchBrainClient;
   learning: boolean;
@@ -116,7 +117,7 @@ export class FetchBrain {
    * Query if FetchBrain "knows" a URL
    */
   async query(options: { url: string; intelligence?: string }) {
-    const result = await this.client.query(options.url);
+    const result = await this.client.query(options.url, options.url);
     return {
       known: result.known,
       data: result.data,
@@ -128,7 +129,7 @@ export class FetchBrain {
    * "Teach" FetchBrain new data
    */
   async learn(options: { url: string; data: Record<string, unknown> }) {
-    return this.client.learn(options.url, options.data);
+    return this.client.learn(options.url, options.data, options.url);
   }
 
   /**
@@ -210,9 +211,11 @@ export class FetchBrain {
         url: url,
       });
 
+      const key = (request as { uniqueKey?: string }).uniqueKey ?? url;
+
       try {
         // 1. Check if FetchBrain "knows" this URL
-        const aiResult = await client.query(url);
+        const aiResult = await client.query(key, url);
 
         // Track if AI data was used (to skip learning)
         let usedAIData = false;
@@ -290,8 +293,8 @@ export class FetchBrain {
               runStats.learned++;
               const requestUrl = requestContextMap.get(context) || url;
 
-              // Learn with request URL - this is what gets queried
-              await client.learn(requestUrl, data);
+              // Learn with key (and url as optional) - key is what gets queried
+              await client.learn(key, data, requestUrl);
             }
 
             // Continue with normal pushData
@@ -301,6 +304,7 @@ export class FetchBrain {
 
         // Run handler with async context (for Dataset.pushData interception)
         const requestContext: RequestContext = {
+          key,
           url,
           client,
           learning: config.learning !== false,
@@ -505,7 +509,7 @@ export async function pushData(
     // Handle both single object and array
     const items = Array.isArray(data) ? data : [data];
     for (const item of items) {
-      await ctx.client.learn(ctx.url, item);
+      await ctx.client.learn(ctx.key, item, ctx.url);
     }
   }
 

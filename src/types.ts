@@ -83,8 +83,7 @@ export interface FetchBrainConfig {
 
 /** Query request to the API */
 export interface QueryRequest {
-  urls: string[];
-  actorId?: string;
+  items: { key: string; url?: string }[];
   intelligence: IntelligenceLevel;
   /** If specified, only return data from this build version */
   build?: string;
@@ -92,38 +91,29 @@ export interface QueryRequest {
 
 /** Single query result */
 export interface QueryResultItem {
-  url: string;
+  key: string;
+  url?: string;
   known: boolean;
   data?: Record<string, unknown>;
   confidence?: number;
-  // Note: learnedAt is internal - API returns pure AI response
 }
 
 /** Query response from the API */
 export interface QueryResponse {
   known: QueryResultItem[];
-  unknown: string[];
+  unknown: string[]; // keys
 }
 
 /** Learn request to the API */
 export interface LearnRequest {
-  actorId?: string;
-  entries: Array<{
-    url: string;
-    data: Record<string, unknown>;
-  }>;
+  entries: Array<{ key: string; url?: string; data: Record<string, unknown> }>;
 }
 
 /** Learn response from the API */
 export interface LearnResponse {
-  status: "accepted" | "rejected" | "flagged";
   learned: number;
-  verification?: {
-    schemaValid: boolean;
-    valuesValid: boolean;
-    duplicate: boolean;
-    warnings: string[];
-  };
+  status: "success" | "partial" | "rejected";
+  errors?: string[];
 }
 
 /** Stats response from the API */
