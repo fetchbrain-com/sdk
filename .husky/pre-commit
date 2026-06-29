@@ -1,6 +1,16 @@
 #!/bin/sh
 # Pre-commit hook: Run lint, typecheck, and build before committing
 
+# Enforce the FetchBrain commit identity — no personal accounts in this repo.
+commit_email="$(git config user.email)"
+case "$commit_email" in
+  *@fetchbrain.com) ;;
+  *)
+    echo "✖ Commit blocked: user.email '$commit_email' is not a @fetchbrain.com identity." >&2
+    echo "  Fix: git config user.email core@fetchbrain.com && git config user.name FetchBrain" >&2
+    exit 1 ;;
+esac
+
 echo "🔍 Running pre-commit checks..."
 
 # Run lint
