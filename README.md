@@ -1,10 +1,14 @@
-# @fetchbrain.com/sdk
+# FetchBrain
 
-> **The AI That Already Knows The Web** - AI-powered scraping optimization for Crawlee
+<!-- TODO: logo image once brand CDN URL is confirmed -->
 
-[![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+**The AI that already knows the web.**
 
-FetchBrain uses a neural network continuously trained on millions of web pages. Ask first → Get instant results. AI doesn't know? → We fetch & learn for next time.
+`@fetchbrain.com/sdk` — AI-powered scraping optimization for Crawlee. Query before you fetch; teach what you learn.
+
+[![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+FetchBrain is the AI cache for web scrapers. Ask first — if FetchBrain already knows the URL, you get the data instantly and the HTTP request is skipped entirely. If it doesn't know, your scraper runs as normal and teaches FetchBrain for next time.
 
 ## Features
 
@@ -279,4 +283,4 @@ MIT © FetchBrain
 
 ---
 
-**Need help?** [Open an issue](https://github.com/fetchbrain-com/fetchbrain-sdk/issues) or check our [documentation](https://docs.fetchbrain.com).
+**Need help?** [Open an issue](https://github.com/fetchbrain-com/sdk/issues) or check our [documentation](https://docs.fetchbrain.com).

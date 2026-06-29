@@ -1,7 +1,7 @@
 {
   "name": "@fetchbrain.com/sdk",
   "version": "0.2.0",
-  "description": "AI-powered scraping optimization for Crawlee - The AI That Already Knows The Web",
+  "description": "FetchBrain SDK — the AI cache for web scrapers; query before you fetch, teach what you learn.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
