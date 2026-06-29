@@ -1,4 +1,4 @@
-import type { BatchConfig, AIResult, Logger, LearnResponse } from "./types";
+import type { BatchConfig, AIResult, Logger, LearnResponse, RawRequest } from "./types";
 
 const DEFAULT_CONFIG: BatchConfig = {
   maxSize: 50,
@@ -6,13 +6,13 @@ const DEFAULT_CONFIG: BatchConfig = {
 };
 
 interface PendingRequest {
-  key: string;
-  url?: string;
+  ref: string;
+  request: RawRequest;
   resolve: (result: AIResult) => void;
   reject: (error: Error) => void;
 }
 
-type BatchExecutor = (items: { key: string; url?: string }[]) => Promise<Map<string, AIResult>>;
+type BatchExecutor = (items: { ref: string; request: RawRequest }[]) => Promise<Map<string, AIResult>>;
 
 /**
  * Request Batcher
@@ -26,6 +26,7 @@ export class RequestBatcher {
   private config: BatchConfig;
   private executor: BatchExecutor;
   private logger: Logger;
+  private refSeq = 0;
 
   constructor(
     executor: BatchExecutor,
@@ -38,11 +39,11 @@ export class RequestBatcher {
   }
 
   /**
-   * Add a key/url pair to the batch queue
+   * Add a request to the batch queue
    */
-  async query(key: string, url?: string): Promise<AIResult> {
+  async query(request: RawRequest): Promise<AIResult> {
     return new Promise((resolve, reject) => {
-      this.queue.push({ key, url, resolve, reject });
+      this.queue.push({ ref: String(this.refSeq++), request, resolve, reject });
 
       // Flush immediately if batch is full
       if (this.queue.length >= this.config.maxSize) {
@@ -52,9 +53,7 @@ export class RequestBatcher {
 
       // Schedule flush if not already scheduled
       if (!this.flushTimeout) {
-        this.flushTimeout = setTimeout(() => {
-          this.flush();
-        }, this.config.maxWait);
+        this.flushTimeout = setTimeout(() => this.flush(), this.config.maxWait);
       }
     });
   }
@@ -74,29 +73,27 @@ export class RequestBatcher {
 
     // Take current queue and reset
     const batch = this.queue.splice(0, this.config.maxSize);
-    const items = batch.map((r) => ({ key: r.key, url: r.url }));
+    const items = batch.map((r) => ({ ref: r.ref, request: r.request }));
 
-    this.logger.debug(`Flushing batch of ${items.length} keys`);
+    this.logger.debug(`Flushing batch of ${items.length} requests`);
 
     try {
       const results = await this.executor(items);
 
-      // Resolve all pending requests
-      for (const request of batch) {
-        request.resolve(results.get(request.key) ?? { known: false });
+      // Resolve all pending requests, fallback to {known:false} if ref missing
+      for (const r of batch) {
+        r.resolve(results.get(r.ref) ?? { known: false });
       }
     } catch (error) {
       // Reject all pending requests
-      for (const request of batch) {
-        request.reject(error as Error);
+      for (const r of batch) {
+        r.reject(error as Error);
       }
     }
 
     // If there are more items in queue, schedule another flush
     if (this.queue.length > 0) {
-      this.flushTimeout = setTimeout(() => {
-        this.flush();
-      }, this.config.maxWait);
+      this.flushTimeout = setTimeout(() => this.flush(), this.config.maxWait);
     }
   }
 
@@ -117,8 +114,8 @@ export class RequestBatcher {
     }
 
     // Resolve all pending with fallback
-    for (const request of this.queue) {
-      request.resolve({ known: false, fallback: true });
+    for (const r of this.queue) {
+      r.resolve({ known: false, fallback: true });
     }
     this.queue = [];
   }
@@ -129,8 +126,7 @@ export class RequestBatcher {
 // =============================================================================
 
 interface LearnEntry {
-  key: string;
-  url?: string;
+  request: RawRequest;
   data: Record<string, unknown>;
 }
 
@@ -140,7 +136,7 @@ interface PendingLearnRequest {
   reject: (error: Error) => void;
 }
 
-type LearnBatchExecutor = (entries: LearnEntry[]) => Promise<LearnResponse>;
+type LearnBatchExecutor = (entries: { request: RawRequest; data: Record<string, unknown> }[]) => Promise<LearnResponse>;
 
 /**
  * Learn Request Batcher
@@ -169,12 +165,11 @@ export class LearnBatcher {
    * Add a learn entry to the batch queue
    */
   async learn(
-    key: string,
+    request: RawRequest,
     data: Record<string, unknown>,
-    url?: string,
   ): Promise<LearnResponse> {
     return new Promise((resolve, reject) => {
-      this.queue.push({ entry: { key, url, data }, resolve, reject });
+      this.queue.push({ entry: { request, data }, resolve, reject });
 
       // Flush immediately if batch is full
       if (this.queue.length >= this.config.maxSize) {
@@ -184,9 +179,7 @@ export class LearnBatcher {
 
       // Schedule flush if not already scheduled
       if (!this.flushTimeout) {
-        this.flushTimeout = setTimeout(() => {
-          this.flush();
-        }, this.config.maxWait);
+        this.flushTimeout = setTimeout(() => this.flush(), this.config.maxWait);
       }
     });
   }
@@ -214,21 +207,19 @@ export class LearnBatcher {
       const result = await this.executor(entries);
 
       // Resolve all pending requests with the batch result
-      for (const request of batch) {
-        request.resolve(result);
+      for (const r of batch) {
+        r.resolve(result);
       }
     } catch (error) {
       // Reject all pending requests
-      for (const request of batch) {
-        request.reject(error as Error);
+      for (const r of batch) {
+        r.reject(error as Error);
       }
     }
 
     // If there are more items in queue, schedule another flush
     if (this.queue.length > 0) {
-      this.flushTimeout = setTimeout(() => {
-        this.flush();
-      }, this.config.maxWait);
+      this.flushTimeout = setTimeout(() => this.flush(), this.config.maxWait);
     }
   }
 
@@ -258,8 +249,8 @@ export class LearnBatcher {
     }
 
     // Resolve all pending with rejected status
-    for (const request of this.queue) {
-      request.resolve({ status: "rejected", learned: 0 });
+    for (const r of this.queue) {
+      r.resolve({ status: "rejected", learned: 0 });
     }
     this.queue = [];
   }

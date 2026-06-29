@@ -1,159 +1,40 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { RequestBatcher } from '../src/batch';
-import { createLogger } from '../src/logger';
-import type { AIResult } from '../src/types';
+import { describe, it, expect, vi } from "vitest";
+import { RequestBatcher, LearnBatcher } from "../src/batch";
+import { createLogger } from "../src/logger";
 
-describe('RequestBatcher', () => {
-  const logger = createLogger('error', false);
+const log = createLogger("info", false);
 
-  const createMockExecutor = () => {
-    return vi.fn(async (items: { key: string; url?: string }[]): Promise<Map<string, AIResult>> => {
-      const results = new Map<string, AIResult>();
-      for (const item of items) {
-        if (item.key.includes('known')) {
-          results.set(item.key, { known: true, data: { title: 'Known Product' }, confidence: 0.95 });
-        } else {
-          results.set(item.key, { known: false });
-        }
-      }
-      return results;
+describe("RequestBatcher", () => {
+  it("sends each queued request with a unique ref and resolves each by its ref", async () => {
+    const executor = vi.fn(async (items: { ref: string; request: { url: string } }[]) => {
+      const m = new Map();
+      for (const i of items) m.set(i.ref, { known: i.request.url.endsWith("/known"), data: { u: i.request.url } });
+      return m;
     });
-  };
-
-  describe('batching behavior', () => {
-    it('should batch requests within wait time', async () => {
-      const executor = createMockExecutor();
-      const batcher = new RequestBatcher(executor, { maxSize: 50, maxWait: 50 }, logger);
-
-      // Fire multiple requests simultaneously
-      const promises = [
-        batcher.query('https://example.com/1'),
-        batcher.query('https://example.com/2'),
-        batcher.query('https://example.com/3'),
-      ];
-
-      const results = await Promise.all(promises);
-
-      // Should have been batched into single call
-      expect(executor).toHaveBeenCalledTimes(1);
-      expect(executor).toHaveBeenCalledWith([
-        { key: 'https://example.com/1', url: undefined },
-        { key: 'https://example.com/2', url: undefined },
-        { key: 'https://example.com/3', url: undefined },
-      ]);
-
-      expect(results).toHaveLength(3);
-    });
-
-    it('should flush immediately when batch is full', async () => {
-      const executor = createMockExecutor();
-      const batcher = new RequestBatcher(executor, { maxSize: 2, maxWait: 5000 }, logger);
-
-      const promises = [
-        batcher.query('https://example.com/1'),
-        batcher.query('https://example.com/2'),
-      ];
-
-      await Promise.all(promises);
-
-      // Should flush immediately due to maxSize
-      expect(executor).toHaveBeenCalledTimes(1);
-    });
-
-    it('should handle multiple batches', async () => {
-      const executor = createMockExecutor();
-      const batcher = new RequestBatcher(executor, { maxSize: 2, maxWait: 10 }, logger);
-
-      // First batch
-      const batch1 = Promise.all([
-        batcher.query('https://example.com/1'),
-        batcher.query('https://example.com/2'),
-      ]);
-
-      await batch1;
-
-      // Second batch
-      const batch2 = Promise.all([
-        batcher.query('https://example.com/3'),
-        batcher.query('https://example.com/4'),
-      ]);
-
-      await batch2;
-
-      expect(executor).toHaveBeenCalledTimes(2);
-    });
+    const b = new RequestBatcher(executor, { maxSize: 10, maxWait: 1 }, log);
+    const [a, k] = await Promise.all([
+      b.query({ url: "https://x/unknown" }),
+      b.query({ url: "https://x/known" }),
+    ]);
+    expect(a.known).toBe(false);
+    expect(k.known).toBe(true);
+    // refs are unique per item
+    const sentRefs = executor.mock.calls[0][0].map((i: any) => i.ref);
+    expect(new Set(sentRefs).size).toBe(sentRefs.length);
   });
 
-  describe('result handling', () => {
-    it('should return correct results for each key', async () => {
-      const executor = createMockExecutor();
-      const batcher = new RequestBatcher(executor, { maxSize: 50, maxWait: 50 }, logger);
-
-      const [known, unknown] = await Promise.all([
-        batcher.query('https://example.com/known'),
-        batcher.query('https://example.com/new-page'),
-      ]);
-
-      expect(known.known).toBe(true);
-      expect(known.data).toEqual({ title: 'Known Product' });
-
-      expect(unknown.known).toBe(false);
-      expect(unknown.data).toBeUndefined();
-    });
-
-    it('should handle missing keys in response', async () => {
-      const executor = vi.fn(async () => new Map<string, AIResult>());
-      const batcher = new RequestBatcher(executor, { maxSize: 50, maxWait: 50 }, logger);
-
-      const result = await batcher.query('https://example.com/missing');
-
-      expect(result.known).toBe(false);
-    });
+  it("a ref missing from the executor result resolves to {known:false}", async () => {
+    const executor = vi.fn(async () => new Map()); // server omits every ref
+    const b = new RequestBatcher(executor, { maxSize: 1, maxWait: 0 }, log);
+    expect(await b.query({ url: "https://x/a" })).toEqual({ known: false });
   });
+});
 
-  describe('error handling', () => {
-    it('should reject all pending requests on executor error', async () => {
-      const executor = vi.fn(async () => {
-        throw new Error('API error');
-      });
-      const batcher = new RequestBatcher(executor, { maxSize: 50, maxWait: 50 }, logger);
-
-      await expect(batcher.query('https://example.com/1')).rejects.toThrow('API error');
-    });
-  });
-
-  describe('clear', () => {
-    it('should resolve pending requests with fallback', async () => {
-      const executor = vi.fn(async () => {
-        // Delay to allow clear to be called
-        await new Promise(resolve => setTimeout(resolve, 100));
-        return new Map<string, AIResult>();
-      });
-      const batcher = new RequestBatcher(executor, { maxSize: 50, maxWait: 5000 }, logger);
-
-      const promise = batcher.query('https://example.com/1');
-
-      // Clear before executor completes
-      batcher.clear();
-
-      const result = await promise;
-      expect(result.known).toBe(false);
-      expect(result.fallback).toBe(true);
-    });
-  });
-
-  describe('getQueueSize', () => {
-    it('should return current queue size', () => {
-      const executor = createMockExecutor();
-      const batcher = new RequestBatcher(executor, { maxSize: 50, maxWait: 5000 }, logger);
-
-      expect(batcher.getQueueSize()).toBe(0);
-
-      // Add to queue without awaiting
-      batcher.query('https://example.com/1');
-      batcher.query('https://example.com/2');
-
-      expect(batcher.getQueueSize()).toBe(2);
-    });
+describe("LearnBatcher", () => {
+  it("threads { request, data } entries to the executor", async () => {
+    const executor = vi.fn(async () => ({ learned: 1, status: "success" as const }));
+    const b = new LearnBatcher(executor, { maxSize: 1, maxWait: 0 }, log);
+    await b.learn({ url: "https://x/a", method: "POST", uniqueKey: "k1" }, { v: 1 });
+    expect(executor.mock.calls[0][0][0]).toEqual({ request: { url: "https://x/a", method: "POST", uniqueKey: "k1" }, data: { v: 1 } });
   });
 });

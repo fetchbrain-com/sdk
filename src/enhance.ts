@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
-import type { FetchBrainConfig, Logger, TelemetryData } from "./types";
+import type { FetchBrainConfig, Logger, RawRequest, TelemetryData } from "./types";
 import {
   FetchBrainClient,
   setScrapeContext,
@@ -13,11 +13,53 @@ import { collectTelemetry, TelemetryBuffer } from "./telemetry";
  * This allows Dataset.pushData interception even when called statically
  */
 interface RequestContext {
-  key: string;
-  url: string;
+  request: RawRequest;
   client: FetchBrainClient;
   learning: boolean;
   aiKnown: boolean; // Whether AI already knows this URL
+}
+
+const STRIP_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
+const SDK_USERDATA_KEYS = new Set(["fetchBrainKnown", "fetchBrainData", "__fetchBrainResult"]);
+
+/**
+ * Snapshot the raw request the SDK forwards (credentials + SDK userData removed).
+ * Note: non-SDK `userData` keys are forwarded as-is — credentials belong in headers
+ * (which ARE stripped), not userData.
+ */
+function buildRawRequest(request: Record<string, unknown>): RawRequest {
+  const r = request as {
+    url: string; method?: string; uniqueKey?: string; payload?: unknown;
+    headers?: Record<string, unknown>; userData?: Record<string, unknown>; label?: string;
+  };
+  let headers: Record<string, string> | undefined;
+  if (r.headers) {
+    headers = {};
+    for (const [k, v] of Object.entries(r.headers)) {
+      if (!STRIP_HEADERS.has(k.toLowerCase()) && typeof v === "string") headers[k] = v;
+    }
+    if (Object.keys(headers).length === 0) headers = undefined;
+  }
+  let userData: Record<string, unknown> | undefined;
+  if (r.userData) {
+    userData = {};
+    for (const [k, v] of Object.entries(r.userData)) if (!SDK_USERDATA_KEYS.has(k)) userData[k] = v;
+    if (Object.keys(userData).length === 0) userData = undefined;
+  }
+  let body: string | undefined;
+  if (typeof r.payload === "string") body = r.payload;
+  // binary payloads are omitted (identity is url+method+uniqueKey; body is metadata only)
+  return { url: r.url, method: r.method, uniqueKey: r.uniqueKey, body, headers, userData, label: r.label };
+}
+
+/** Warn once when a body-bearing request can't be differentiated by its key. */
+function warnDefaultUniqueKey(request: { url: string; method?: string; uniqueKey?: string }, logger: Logger, warned: Set<string>): void {
+  const method = (request.method ?? "GET").toUpperCase();
+  const isDefault = !request.uniqueKey || request.uniqueKey === request.url;
+  if (method !== "GET" && isDefault && !warned.has(request.url)) {
+    warned.add(request.url);
+    logger.warn(`FetchBrain: ${method} ${request.url} has a default uniqueKey — set request.uniqueKey to your stable identity, or these requests won't be cached separately.`);
+  }
 }
 
 const asyncContext = new AsyncLocalStorage<RequestContext>();
@@ -94,11 +136,6 @@ function shouldRunHandler(
 }
 
 /**
- * Context tracking for learning (legacy WeakMap for context.pushData)
- */
-const requestContextMap = new WeakMap<object, string>();
-
-/**
  * FetchBrain main class
  *
  * Provides the static enhance() method to wrap Crawlee crawlers
@@ -117,7 +154,7 @@ export class FetchBrain {
    * Query if FetchBrain "knows" a URL
    */
   async query(options: { url: string; intelligence?: string }) {
-    const result = await this.client.query(options.url, options.url);
+    const result = await this.client.query({ url: options.url });
     return {
       known: result.known,
       data: result.data,
@@ -129,7 +166,7 @@ export class FetchBrain {
    * "Teach" FetchBrain new data
    */
   async learn(options: { url: string; data: Record<string, unknown> }) {
-    return this.client.learn(options.url, options.data, options.url);
+    return this.client.learn({ url: options.url }, options.data);
   }
 
   /**
@@ -194,6 +231,9 @@ export class FetchBrain {
     // Detect crawler type for context
     const crawlerType = (crawler as any).constructor?.name || "Unknown";
 
+    // Per-crawl set to track urls already warned about default uniqueKey
+    const warnedKeys = new Set<string>();
+
     // Create wrapped handler
     const wrappedHandler = async (context: RequestHandlerContext) => {
       const { request } = context;
@@ -211,11 +251,13 @@ export class FetchBrain {
         url: url,
       });
 
-      const key = (request as { uniqueKey?: string }).uniqueKey ?? url;
+      // Snapshot BEFORE enhance mutates request.userData
+      const rawRequest = buildRawRequest(request as Record<string, unknown>);
+      warnDefaultUniqueKey(rawRequest, logger, warnedKeys);
 
       try {
         // 1. Check if FetchBrain "knows" this URL
-        const aiResult = await client.query(key, url);
+        const aiResult = await client.query(rawRequest);
 
         // Track if AI data was used (to skip learning)
         let usedAIData = false;
@@ -278,9 +320,6 @@ export class FetchBrain {
           logger.debug(`Learning: ${url}`);
         }
 
-        // Track current URL for pushData interception
-        requestContextMap.set(context, url);
-
         // Intercept context.pushData to capture results for learning
         if (originalPushData && config.learning !== false) {
           context.pushData = async (data: Record<string, unknown>) => {
@@ -291,10 +330,7 @@ export class FetchBrain {
 
             if (shouldLearn) {
               runStats.learned++;
-              const requestUrl = requestContextMap.get(context) || url;
-
-              // Learn with key (and url as optional) - key is what gets queried
-              await client.learn(key, data, requestUrl);
+              await client.learn(rawRequest, data);
             }
 
             // Continue with normal pushData
@@ -304,8 +340,7 @@ export class FetchBrain {
 
         // Run handler with async context (for Dataset.pushData interception)
         const requestContext: RequestContext = {
-          key,
-          url,
+          request: rawRequest,
           client,
           learning: config.learning !== false,
           aiKnown: aiResult.known,
@@ -314,9 +349,6 @@ export class FetchBrain {
         await asyncContext.run(requestContext, async () => {
           await originalHandler.call(crawler, context);
         });
-
-        // Cleanup
-        requestContextMap.delete(context);
 
         // Collect telemetry (if enabled) - behind the scenes
         if (config.telemetry?.enabled) {
@@ -509,7 +541,7 @@ export async function pushData(
     // Handle both single object and array
     const items = Array.isArray(data) ? data : [data];
     for (const item of items) {
-      await ctx.client.learn(ctx.key, item, ctx.url);
+      await ctx.client.learn(ctx.request, item);
     }
   }
 

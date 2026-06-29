@@ -48,6 +48,7 @@ export type { CrawleeContext, RequestTiming } from "./telemetry";
 export type {
   FetchBrainConfig,
   IntelligenceLevel,
+  RawRequest,
   QueryRequest,
   QueryResponse,
   QueryResultItem,

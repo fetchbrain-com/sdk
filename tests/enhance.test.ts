@@ -166,7 +166,7 @@ describe("FetchBrain.enhance", () => {
 
       await enhanced.requestHandler(context);
 
-      expect(__mockQuery).toHaveBeenCalledWith("https://example.com/test", "https://example.com/test");
+      expect((__mockQuery as any).mock.calls[0][0]).toMatchObject({ url: "https://example.com/test" });
     });
 
     it("should use uniqueKey for query when provided", async () => {
@@ -185,7 +185,7 @@ describe("FetchBrain.enhance", () => {
 
       await enhanced.requestHandler(context);
 
-      expect(__mockQuery).toHaveBeenCalledWith("search:nike:page:1", "https://api.example.com/graphql");
+      expect((__mockQuery as any).mock.calls[0][0]).toMatchObject({ url: "https://api.example.com/graphql", uniqueKey: "search:nike:page:1" });
     });
 
     it("should skip handler when AI knows and alwaysRun is false", async () => {
@@ -450,7 +450,7 @@ describe("FetchBrain.enhance", () => {
 
       await enhanced.requestHandler(context);
 
-      expect(__mockLearn).toHaveBeenCalledWith("https://example.com/new", { title: "New Data" }, "https://example.com/new");
+      expect(__mockLearn).toHaveBeenCalledWith(expect.objectContaining({ url: "https://example.com/new" }), { title: "New Data" });
     });
 
     it("should NOT learn when AI already knows", async () => {
@@ -535,6 +535,38 @@ describe("FetchBrain.enhance", () => {
       await expect(enhanced.requestHandler(context)).rejects.toThrow(
         "Handler error"
       );
+    });
+  });
+
+  describe("RawRequest snapshot", () => {
+    it("sends a RawRequest snapshot (auth headers + SDK userData stripped) on query", async () => {
+      (__mockQuery as any).mockResolvedValue({ known: false });
+      const crawler = createMockCrawler();
+      const enhanced = FetchBrain.enhance(crawler, testConfig);
+      await enhanced.requestHandler({
+        request: { url: "https://api/gql", method: "POST", uniqueKey: "op:1", payload: '{"q":1}',
+          headers: { "Authorization": "Bearer secret", "X-Lang": "en" }, userData: { page: 2, fetchBrainKnown: true } },
+        pushData: vi.fn(),
+      });
+      const sent = (__mockQuery as any).mock.calls[0][0]; // first arg = RawRequest
+      expect(sent).toMatchObject({ url: "https://api/gql", method: "POST", uniqueKey: "op:1", body: '{"q":1}' });
+      expect(sent.headers).toEqual({ "X-Lang": "en" });      // Authorization stripped
+      expect(sent.userData).toEqual({ page: 2 });            // SDK key excluded
+    });
+
+    it("warns once when a non-GET request has a default (url-equal/absent) uniqueKey", async () => {
+      (__mockQuery as any).mockResolvedValue({ known: false });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const crawler = createMockCrawler();
+      const enhanced = FetchBrain.enhance(crawler, testConfig);
+      // default uniqueKey === url (the Crawlee default) on a POST → should warn
+      const ctx = { request: { url: "https://api/gql", method: "POST", uniqueKey: "https://api/gql" }, pushData: vi.fn() };
+      await enhanced.requestHandler(ctx);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("default uniqueKey"));
+      // warn-once: a second handler run for the same url must not warn again
+      await enhanced.requestHandler({ request: { url: "https://api/gql", method: "POST", uniqueKey: "https://api/gql" }, pushData: vi.fn() });
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+      warnSpy.mockRestore();
     });
   });
 });

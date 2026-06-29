@@ -10,6 +10,7 @@ import type {
   TelemetryData,
   TelemetryRequest,
   TelemetryResponse,
+  RawRequest,
 } from "./types";
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
@@ -101,60 +102,50 @@ export class FetchBrainClient {
   }
 
   /**
-   * Query if FetchBrain "knows" a key/url
+   * Query if FetchBrain "knows" a request
    */
-  async query(key: string, url?: string): Promise<AIResult> {
-    // Circuit breaker check
+  async query(request: RawRequest): Promise<AIResult> {
     if (this.circuitBreaker.isOpen()) {
-      this.logger.debug(`Circuit open, skipping query`);
       return { known: false, fallback: true };
     }
-
     try {
-      return await this.batcher.query(key, url);
+      return await this.batcher.query(request);
     } catch (error) {
-      this.logger.debug(`Query failed:`, error);
+      this.logger.debug("Query failed:", error);
       return { known: false, fallback: true };
     }
   }
 
   /**
-   * Query multiple items at once (bypass batcher for bulk operations)
+   * Query multiple requests at once — returns ordered array matching input order
    */
-  async queryBulk(items: { key: string; url?: string }[]): Promise<Map<string, AIResult>> {
+  async queryBulk(requests: RawRequest[]): Promise<AIResult[]> {
     if (this.circuitBreaker.isOpen()) {
-      this.logger.debug(`Circuit open, skipping bulk query`);
-      return new Map(items.map((i) => [i.key, { known: false, fallback: true }]));
+      return requests.map(() => ({ known: false, fallback: true }));
     }
-
     try {
-      return await this.executeBatchQuery(items);
+      const items = requests.map((request, i) => ({ ref: String(i), request }));
+      const results = await this.executeBatchQuery(items);
+      return items.map((i) => results.get(i.ref) ?? { known: false });
     } catch {
-      return new Map(items.map((i) => [i.key, { known: false, fallback: true }]));
+      return requests.map(() => ({ known: false, fallback: true }));
     }
   }
 
   /**
    * "Teach" FetchBrain new data (batched for high-concurrency)
    */
-  async learn(
-    key: string,
-    data: Record<string, unknown>,
-    url?: string,
-  ): Promise<LearnResponse> {
+  async learn(request: RawRequest, data: Record<string, unknown>): Promise<LearnResponse> {
     if (!this.config.learning) {
       return { status: "rejected", learned: 0 };
     }
-
     if (this.circuitBreaker.isOpen()) {
-      this.logger.debug(`Circuit open, skipping learn for: ${key}`);
       return { status: "rejected", learned: 0 };
     }
-
     try {
-      return await this.learnBatcher.learn(key, data, url);
+      return await this.learnBatcher.learn(request, data);
     } catch (error) {
-      this.logger.warn(`Learn failed:`, error);
+      this.logger.warn("Learn failed:", error);
       return { status: "rejected", learned: 0 };
     }
   }
@@ -184,17 +175,15 @@ export class FetchBrainClient {
    * Execute a batch query against the API
    */
   private async executeBatchQuery(
-    items: { key: string; url?: string }[],
+    items: { ref: string; request: RawRequest }[],
   ): Promise<Map<string, AIResult>> {
     const results = new Map<string, AIResult>();
 
-    // Build query request
     const request: QueryRequest = {
       items,
       intelligence: this.config.intelligence,
     };
 
-    // If refreshOnRebuild is enabled, include current build to filter results
     if (this.config.refreshOnRebuild && process.env.APIFY_ACTOR_BUILD_ID) {
       request.build = process.env.APIFY_ACTOR_BUILD_ID;
     }
@@ -207,14 +196,14 @@ export class FetchBrainClient {
 
       this.circuitBreaker.recordSuccess();
 
-      // Process known items (indexed by key)
+      // Index known items by ref
       for (const item of response.known) {
-        results.set(item.key, { known: true, data: item.data, confidence: item.confidence });
+        results.set(item.ref, { known: true, data: item.data, confidence: item.confidence });
       }
 
-      // Process unknown keys
-      for (const key of response.unknown) {
-        results.set(key, { known: false });
+      // Index unknown refs
+      for (const ref of response.unknown) {
+        results.set(ref, { known: false });
       }
 
       return results;
@@ -228,11 +217,10 @@ export class FetchBrainClient {
    * Execute a batch learn against the API
    */
   private async executeBatchLearn(
-    entries: Array<{ key: string; url?: string; data: Record<string, unknown> }>,
+    entries: { request: RawRequest; data: Record<string, unknown> }[],
   ): Promise<LearnResponse> {
     const processed = entries.map((e) => ({
-      key: e.key,
-      url: e.url,
+      request: e.request,
       data: this.config.extractForLearning ? this.config.extractForLearning(e.data) : e.data,
     }));
 

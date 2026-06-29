@@ -81,32 +81,40 @@ export interface FetchBrainConfig {
   telemetry?: TelemetryConfig;
 }
 
+/** The raw request the SDK forwards; the API derives identity from a subset. */
+export interface RawRequest {
+  url: string;
+  method?: string;
+  uniqueKey?: string;
+  body?: string;
+  headers?: Record<string, string>;
+  userData?: Record<string, unknown>;
+  label?: string;
+}
+
 /** Query request to the API */
 export interface QueryRequest {
-  items: { key: string; url?: string }[];
+  items: { ref: string; request: RawRequest }[];
   intelligence: IntelligenceLevel;
-  /** If specified, only return data from this build version */
   build?: string;
 }
 
-/** Single query result */
+/** Single query result (matched by ref) */
 export interface QueryResultItem {
-  key: string;
-  url?: string;
-  known: boolean;
+  ref: string;
   data?: Record<string, unknown>;
   confidence?: number;
 }
 
 /** Query response from the API */
 export interface QueryResponse {
-  known: QueryResultItem[];
-  unknown: string[]; // keys
+  known: { ref: string; data: Record<string, unknown>; confidence: number }[];
+  unknown: string[]; // refs
 }
 
 /** Learn request to the API */
 export interface LearnRequest {
-  entries: Array<{ key: string; url?: string; data: Record<string, unknown> }>;
+  entries: { request: RawRequest; data: Record<string, unknown> }[];
 }
 
 /** Learn response from the API */

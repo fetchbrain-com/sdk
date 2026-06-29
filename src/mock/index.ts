@@ -9,7 +9,9 @@ import type {
   LearnResponse,
   StatsResponse,
   FetchBrainConfig,
+  RawRequest,
 } from "../types";
+import { deriveIdentity } from "./derive-identity";
 
 export interface MockFetchBrainOptions {
   /** Pre-trained AI knowledge */
@@ -42,10 +44,13 @@ export class MockFetchBrain {
       ...options,
     };
 
-    // Initialize with provided knowledge
+    // Initialize with provided knowledge (Map<url, data>)
     if (options.initialKnowledge) {
       for (const [url, data] of options.initialKnowledge) {
-        this.knowledge.set(url, { data, learnedAt: new Date().toISOString() });
+        this.knowledge.set(deriveIdentity({ url }), {
+          data,
+          learnedAt: new Date().toISOString(),
+        });
       }
     }
   }
@@ -61,7 +66,7 @@ export class MockFetchBrain {
     return Math.random() < (this.options.failureRate || 0.1);
   }
 
-  async query(key: string, _url?: string): Promise<AIResult> {
+  async query(request: RawRequest): Promise<AIResult> {
     await this.simulateLatency();
 
     if (this.shouldFail()) {
@@ -69,7 +74,7 @@ export class MockFetchBrain {
     }
 
     this._stats.queries++;
-    const known = this.knowledge.get(key);
+    const known = this.knowledge.get(deriveIdentity(request));
 
     if (known) {
       this._stats.recognized++;
@@ -83,20 +88,13 @@ export class MockFetchBrain {
     return { known: false };
   }
 
-  async queryBulk(items: { key: string; url?: string }[]): Promise<Map<string, AIResult>> {
-    const results = new Map<string, AIResult>();
-
-    for (const { key, url } of items) {
-      results.set(key, await this.query(key, url));
-    }
-
-    return results;
+  async queryBulk(requests: RawRequest[]): Promise<AIResult[]> {
+    return Promise.all(requests.map((r) => this.query(r)));
   }
 
   async learn(
-    key: string,
+    request: RawRequest,
     data: Record<string, unknown>,
-    _url?: string,
   ): Promise<LearnResponse> {
     await this.simulateLatency();
 
@@ -104,7 +102,10 @@ export class MockFetchBrain {
       throw new Error("Simulated API failure");
     }
 
-    this.knowledge.set(key, { data, learnedAt: new Date().toISOString() });
+    this.knowledge.set(deriveIdentity(request), {
+      data,
+      learnedAt: new Date().toISOString(),
+    });
     this._stats.learned++;
 
     return {
@@ -127,11 +128,11 @@ export class MockFetchBrain {
   }
 
   /**
-   * Seed the AI with test data
+   * Seed the AI with test data (url-keyed convenience API)
    */
-  seed(entries: Array<{ key: string; data: Record<string, unknown> }>): void {
+  seed(entries: Array<{ url: string; data: Record<string, unknown> }>): void {
     for (const entry of entries) {
-      this.knowledge.set(entry.key, {
+      this.knowledge.set(deriveIdentity({ url: entry.url }), {
         data: entry.data,
         learnedAt: new Date().toISOString(),
       });
@@ -154,10 +155,10 @@ export class MockFetchBrain {
   }
 
   /**
-   * Check if AI knows a key
+   * Check if AI knows a URL (keys by deriveIdentity({ url }))
    */
-  has(key: string): boolean {
-    return this.knowledge.has(key);
+  has(url: string): boolean {
+    return this.knowledge.has(deriveIdentity({ url }));
   }
 }
 

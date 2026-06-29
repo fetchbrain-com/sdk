@@ -5,7 +5,7 @@
  * against a fidelity oracle (`createFakeApi`) that enforces the API's ACTUAL
  * request/response contract. This is the layer that was missing when the two
  * P0 contract bugs shipped invisibly:
- *   1. wrong request shape (`urls` / `entries` w/o `key` instead of `items` / `entries[{key}]`)
+ *   1. wrong request shape (`urls` / `entries` w/o `request` instead of `items:[{ref,request}]` / `entries:[{request,data}]`)
  *   2. learn status `"accepted"` instead of `"success"`.
  *
  * NO `vi.mock("../src/client")` here. We stub ONLY the global `fetch`.
@@ -14,11 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { FetchBrainClient } from "../src/client";
 import { FetchBrain } from "../src/enhance";
 import type { FetchBrainConfig } from "../src/types";
+import { deriveIdentity } from "../src/mock/derive-identity";
 
 // =============================================================================
 // THE FIDELITY ORACLE: createFakeApi()
 //
-// A fetch-compatible function backed by an in-memory Map keyed by `key`.
+// A fetch-compatible function backed by an in-memory Map keyed by deriveIdentity.
 // It mirrors apps/api/src/routes/{query,learn}.ts validation order + status
 // codes EXACTLY, and records every request for assertions.
 // =============================================================================
@@ -31,7 +32,7 @@ interface RecordedRequest {
 
 interface FakeApi {
   fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-  /** In-memory store keyed by `key`. */
+  /** In-memory store keyed by deriveIdentity(item.request). */
   store: Map<string, { data: Record<string, unknown>; url: string }>;
   /** Every request seen, in order. */
   requests: RecordedRequest[];
@@ -98,36 +99,36 @@ function createFakeApi(): FakeApi {
       }
       for (const item of body.items) {
         if (
-          !item.key ||
-          typeof item.key !== "string" ||
-          item.key.trim() === ""
+          !item.request ||
+          !item.request.url ||
+          typeof item.request.url !== "string" ||
+          item.request.url.trim() === ""
         ) {
           return jsonResponse(
-            { error: "Each item must have a non-empty key string" },
+            { error: "Each item must have a non-empty request.url string" },
             400,
           );
         }
       }
 
       const known: Array<{
-        key: string;
-        url: string;
-        confidence: number;
+        ref: string;
         data: Record<string, unknown>;
+        confidence: number;
       }> = [];
       const unknown: string[] = [];
 
       for (const item of body.items) {
-        const stored = store.get(item.key);
+        const identity = deriveIdentity(item.request);
+        const stored = store.get(identity);
         if (stored) {
           known.push({
-            key: item.key,
-            url: item.url ?? stored.url,
+            ref: item.ref,
             confidence: 0.95,
             data: stored.data,
           });
         } else {
-          unknown.push(item.key);
+          unknown.push(item.ref);
         }
       }
 
@@ -150,20 +151,29 @@ function createFakeApi(): FakeApi {
       let validCount = 0;
 
       for (const entry of body.entries) {
-        const key = entry?.key;
-        if (!key || typeof key !== "string" || key.trim() === "") {
-          validationErrors.push(`Invalid entry: missing or empty key`);
+        if (
+          !entry.request ||
+          !entry.request.url ||
+          typeof entry.request.url !== "string" ||
+          entry.request.url.trim() === ""
+        ) {
+          validationErrors.push(`Invalid entry: missing or empty request.url`);
           continue;
         }
         if (!entry.data || typeof entry.data !== "object") {
-          validationErrors.push(`Invalid entry for ${key}: data must be an object`);
+          validationErrors.push(
+            `Invalid entry for ${entry.request.url}: data must be an object`,
+          );
           continue;
         }
         if (JSON.stringify(entry.data).length > 100 * 1024) {
-          validationErrors.push(`Invalid entry for ${key}: data too large`);
+          validationErrors.push(
+            `Invalid entry for ${entry.request.url}: data too large`,
+          );
           continue;
         }
-        store.set(key, { data: entry.data, url: entry.url ?? key });
+        const identity = deriveIdentity(entry.request);
+        store.set(identity, { data: entry.data, url: entry.request.url });
         validCount++;
       }
 
@@ -224,32 +234,32 @@ async function rawPost(
 // GROUP 1 — Oracle fidelity (prove the double enforces the real contract)
 // =============================================================================
 describe("Group 1 — oracle fidelity", () => {
-  it("query with old shape {urls:[...]} (no items) -> 400", async () => {
+  it("query with old shape {items:[{key}]} (no request) -> 400", async () => {
     const api = createFakeApi();
     const { status, json } = await rawPost(api, "/v1/query", {
-      urls: ["https://x/1"],
+      items: [{ key: "k1" }],
     });
     expect(status).toBe(400);
-    expect(json.error).toMatch(/items must be an array/);
+    expect(json.error).toMatch(/non-empty request\.url/);
   });
 
-  it("query with an item missing key -> 400", async () => {
+  it("query with {items:[{ref,request:{}}]} (has request but no request.url) -> 400", async () => {
     const api = createFakeApi();
     const { status, json } = await rawPost(api, "/v1/query", {
-      items: [{ url: "https://x/1" }],
+      items: [{ ref: "r", request: {} }],
       intelligence: "high",
     });
     expect(status).toBe(400);
-    expect(json.error).toMatch(/non-empty key string/);
+    expect(json.error).toMatch(/non-empty request\.url/);
   });
 
-  it("learn with old shape {entries:[{url,data}]} (no key) -> 400", async () => {
+  it("learn with old shape {entries:[{url,data}]} (no request) -> 400 (No valid entries)", async () => {
     const api = createFakeApi();
     const { status, json } = await rawPost(api, "/v1/learn", {
       entries: [{ url: "https://x/1", data: { title: "A" } }],
     });
     expect(status).toBe(400);
-    // No valid entries (all missing key) -> "No valid entries to learn".
+    // No valid entries (all missing request.url) -> "No valid entries to learn".
     expect(json.error).toMatch(/No valid entries to learn/);
   });
 
@@ -258,7 +268,7 @@ describe("Group 1 — oracle fidelity", () => {
     const res = await api.fetch("https://fake.local/v1/learn", {
       method: "POST",
       body: JSON.stringify({
-        entries: [{ key: "k1", url: "https://x/1", data: { title: "A" } }],
+        entries: [{ request: { url: "https://x/1" }, data: { title: "A" } }],
       }),
     });
     expect(res.status).toBe(201);
@@ -285,27 +295,25 @@ describe("Group 2 — full-stack request/response conformance", () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    const result = await c.query("k1", "https://x/1");
+    const result = await c.query({ url: "https://x/1" });
     expect(result.known).toBe(false);
 
     const body = api.queryCalls()[0].body as any;
-    expect(body).toEqual({
-      items: [{ key: "k1", url: "https://x/1" }],
-      intelligence: "high",
-    });
+    expect(body.items[0]).toMatchObject({ request: { url: "https://x/1" } });
+    expect(typeof body.items[0].ref).toBe("string");
     expect(body.urls).toBeUndefined();
+    expect(body.items[0].key).toBeUndefined();
   });
 
   it("learn sends exact entries body and parses to {learned:1,status:'success'}", async () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    const res = await c.learn("k1", { title: "A" }, "https://x/1");
+    const res = await c.learn({ url: "https://x/1" }, { title: "A" });
 
     const body = api.learnCalls()[0].body as any;
-    expect(body).toEqual({
-      entries: [{ key: "k1", url: "https://x/1", data: { title: "A" } }],
-    });
+    expect(body.entries[0]).toMatchObject({ request: { url: "https://x/1" }, data: { title: "A" } });
+    expect(body.entries[0].key).toBeUndefined();
     expect(res).toMatchObject({ learned: 1, status: "success" });
   });
 
@@ -313,9 +321,9 @@ describe("Group 2 — full-stack request/response conformance", () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    await c.learn("k1", { title: "A" }, "https://x/1");
+    await c.learn({ url: "https://x/1" }, { title: "A" });
 
-    const result = await c.query("k1");
+    const result = await c.query({ url: "https://x/1" });
     expect(result.known).toBe(true);
     expect(result.data).toEqual({ title: "A" });
     expect(typeof result.confidence).toBe("number");
@@ -323,9 +331,9 @@ describe("Group 2 — full-stack request/response conformance", () => {
 });
 
 // =============================================================================
-// GROUP 3 — Key identity at scale (the core P0 fix, realistically)
+// GROUP 3 — Identity at scale: same url, different uniqueKey → distinct knowledge
 // =============================================================================
-describe("Group 3 — key identity at scale", () => {
+describe("Group 3 — identity at scale", () => {
   let api: FakeApi;
   beforeEach(() => {
     api = createFakeApi();
@@ -340,32 +348,33 @@ describe("Group 3 — key identity at scale", () => {
     const sharedUrl = "https://api/graphql";
     const N = 50;
 
-    // Learn each key_i -> {n:i}, all under the same url.
+    // Learn each uniqueKey -> {n:i}, all under the same url with method POST.
     for (let i = 0; i < N; i++) {
-      await c.learn(`key_${i}`, { n: i }, sharedUrl);
+      await c.learn({ url: sharedUrl, method: "POST", uniqueKey: `key_${i}` }, { n: i });
     }
 
     // Query all 50 in bulk.
-    const items = Array.from({ length: N }, (_, i) => ({
-      key: `key_${i}`,
+    const requests = Array.from({ length: N }, (_, i) => ({
       url: sharedUrl,
+      method: "POST" as const,
+      uniqueKey: `key_${i}`,
     }));
-    const results = await c.queryBulk(items);
+    const results = await c.queryBulk(requests);
 
     for (let i = 0; i < N; i++) {
-      const r = results.get(`key_${i}`)!;
+      const r = results[i];
       expect(r.known).toBe(true);
       expect(r.data).toEqual({ n: i });
     }
   });
 
-  it("different key + same url learned under another key -> {known:false} (no false hit)", async () => {
+  it("different uniqueKey + same url learned under another key -> {known:false} (no false hit)", async () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    await c.learn("op:A", { hit: "A" }, "https://api/graphql");
+    await c.learn({ url: "https://api/graphql", method: "POST", uniqueKey: "op:A" }, { hit: "A" });
 
-    const result = await c.query("op:B", "https://api/graphql");
+    const result = await c.query({ url: "https://api/graphql", method: "POST", uniqueKey: "op:B" });
     expect(result.known).toBe(false);
     expect(result.data).toBeUndefined();
   });
@@ -390,13 +399,13 @@ describe("Group 4 — concurrency / batching correctness", () => {
 
     // Seed even keys so we get a known/unknown mix.
     for (let i = 0; i < N; i += 2) {
-      await c.learn(`key_${i}`, { n: i }, `https://x/${i}`);
+      await c.learn({ url: `https://x/${i}` }, { n: i });
     }
     const learnPostsBefore = api.learnCalls().length;
 
     // Fire 100 concurrent queries.
     const promises = Array.from({ length: N }, (_, i) =>
-      c.query(`key_${i}`).then((r) => ({ i, r })),
+      c.query({ url: `https://x/${i}` }).then((r) => ({ i, r })),
     );
     const settled = await Promise.all(promises);
 
@@ -423,15 +432,16 @@ describe("Group 4 — concurrency / batching correctness", () => {
     const N = 30;
 
     const promises = Array.from({ length: N }, (_, i) =>
-      c.learn(`lk_${i}`, { n: i }, `https://x/${i}`),
+      c.learn({ url: `https://x/${i}` }, { n: i }),
     );
     await c.flushLearnBatch();
     await Promise.all(promises);
 
-    // All entries ended up in the store.
+    // All entries ended up in the store (keyed by deriveIdentity).
     for (let i = 0; i < N; i++) {
-      expect(api.store.has(`lk_${i}`)).toBe(true);
-      expect(api.store.get(`lk_${i}`)!.data).toEqual({ n: i });
+      const identity = deriveIdentity({ url: `https://x/${i}` });
+      expect(api.store.has(identity)).toBe(true);
+      expect(api.store.get(identity)!.data).toEqual({ n: i });
     }
 
     // Batched: fewer learn POSTs than learn calls.
@@ -454,7 +464,7 @@ describe("Group 5 — graceful degradation", () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    const result = await c.query("k1", "https://x/1");
+    const result = await c.query({ url: "https://x/1" });
     expect(result).toEqual({ known: false, fallback: true });
   });
 
@@ -467,7 +477,7 @@ describe("Group 5 — graceful degradation", () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    const result = await c.query("k1", "https://x/1");
+    const result = await c.query({ url: "https://x/1" });
     expect(result).toEqual({ known: false, fallback: true });
   });
 
@@ -477,7 +487,7 @@ describe("Group 5 — graceful degradation", () => {
       if (mode === "fail") {
         return new Response(JSON.stringify({ error: "boom" }), { status: 500 });
       }
-      return new Response(JSON.stringify({ known: [], unknown: ["k"] }), {
+      return new Response(JSON.stringify({ known: [], unknown: ["0"] }), {
         status: 200,
       });
     });
@@ -491,21 +501,21 @@ describe("Group 5 — graceful degradation", () => {
     );
 
     // Drive 2 failures to open the breaker.
-    await c.query("k", "https://x/1");
-    await c.query("k", "https://x/2");
+    await c.query({ url: "https://x/1" });
+    await c.query({ url: "https://x/2" });
     expect(c.getCircuitState().state).toBe("open");
 
     // Subsequent query short-circuits WITHOUT calling fetch.
     const callsAfterOpen = fetchMock.mock.calls.length;
-    const fallback = await c.query("k", "https://x/3");
+    const fallback = await c.query({ url: "https://x/3" });
     expect(fallback).toEqual({ known: false, fallback: true });
     expect(fetchMock.mock.calls.length).toBe(callsAfterOpen);
 
     // Recover: let reset timeout pass, switch the API to ok, query serves again.
     mode = "ok";
     await new Promise((r) => setTimeout(r, 70));
-    const recovered = await c.query("k", "https://x/4");
-    expect(recovered.known).toBe(false); // 'k' is unknown in this mock
+    const recovered = await c.query({ url: "https://x/4" });
+    expect(recovered.known).toBe(false); // url is unknown in this mock
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterOpen);
     expect(c.getCircuitState().state).toBe("closed");
   });
@@ -553,12 +563,13 @@ describe("Group 6 — enhance() end-to-end", () => {
 
     expect(handler).toHaveBeenCalledTimes(1);
     expect(api.learnCalls().length).toBeGreaterThan(0);
-    // Learn POST used key = uniqueKey ?? url = url here.
+    // Learn POST used request.url
     const learnBody = api.learnCalls()[0].body as any;
-    expect(learnBody.entries[0].key).toBe("https://shop/p/1");
-    expect(api.store.has("https://shop/p/1")).toBe(true);
+    expect(learnBody.entries[0].request.url).toBe("https://shop/p/1");
+    const identity = deriveIdentity({ url: "https://shop/p/1" });
+    expect(api.store.has(identity)).toBe(true);
 
-    // Second run: same key now in store -> AI recognized -> handler NOT re-run.
+    // Second run: same identity now in store -> AI recognized -> handler NOT re-run.
     const pushed2: any[] = [];
     const ctx2 = {
       request: { url: "https://shop/p/1" },
@@ -569,11 +580,11 @@ describe("Group 6 — enhance() end-to-end", () => {
     await enhanced.requestHandler(ctx2);
 
     expect(handler).toHaveBeenCalledTimes(1); // not re-run
-    // Cached/recognized data pushed.
+    // Recognized/AI data pushed.
     expect(pushed2).toEqual([{ title: "Scraped" }]);
   });
 
-  it("keys by uniqueKey: query/learn body uses key=uniqueKey, url=request.url", async () => {
+  it("keys by uniqueKey: query/learn body uses request.url + uniqueKey", async () => {
     const handler = vi.fn(async (ctx: any) => {
       await ctx.pushData({ op: "search" });
     });
@@ -591,13 +602,12 @@ describe("Group 6 — enhance() end-to-end", () => {
     await enhanced.fetchBrain.flushLearnBatch();
 
     const queryBody = api.queryCalls()[0].body as any;
-    expect(queryBody.items[0]).toEqual({
-      key: "op:search:1",
-      url: "https://api/graphql",
+    expect(queryBody.items[0]).toMatchObject({
+      request: { url: "https://api/graphql", uniqueKey: "op:search:1" },
     });
 
     const learnBody = api.learnCalls()[0].body as any;
-    expect(learnBody.entries[0].key).toBe("op:search:1");
-    expect(learnBody.entries[0].url).toBe("https://api/graphql");
+    expect(learnBody.entries[0].request.url).toBe("https://api/graphql");
+    expect(learnBody.entries[0].request.uniqueKey).toBe("op:search:1");
   });
 });

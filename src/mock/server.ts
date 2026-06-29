@@ -8,6 +8,7 @@
  */
 
 import express from "express";
+import { deriveIdentity } from "./derive-identity";
 import type {
   QueryRequest,
   QueryResponse,
@@ -69,12 +70,12 @@ app.post("/v1/query", (req, res) => {
   const unknown: string[] = [];
 
   for (const item of items) {
-    const k = knowledge.get(item.key);
+    const k = knowledge.get(deriveIdentity(item.request));
     if (k) {
       stats.recognized++;
-      known.push({ key: item.key, url: item.url, known: true, data: k.data, confidence: 0.97 });
+      known.push({ ref: item.ref, data: k.data, confidence: 0.97 });
     } else {
-      unknown.push(item.key);
+      unknown.push(item.ref);
     }
   }
 
@@ -99,8 +100,11 @@ app.post("/v1/learn", (req, res) => {
   let learned = 0;
 
   for (const entry of entries) {
-    if (entry.key && entry.data) {
-      knowledge.set(entry.key, { data: entry.data, learnedAt: new Date().toISOString() });
+    if (entry.request?.url && entry.data) {
+      knowledge.set(deriveIdentity(entry.request), {
+        data: entry.data,
+        learnedAt: new Date().toISOString(),
+      });
       learned++;
       stats.learned++;
     }
