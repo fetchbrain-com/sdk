@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-FetchBrain is the AI cache for web scrapers. Ask first — if FetchBrain already knows the URL, you get the data instantly and the HTTP request is skipped entirely. If it doesn't know, your scraper runs as normal and teaches FetchBrain for next time.
+FetchBrain is AI-powered web intelligence for scrapers. Ask first — if the AI already knows the URL, you get the data instantly and the HTTP request is skipped entirely. If it doesn't, your scraper runs as normal and teaches FetchBrain for next time.
 
 ## Features
 

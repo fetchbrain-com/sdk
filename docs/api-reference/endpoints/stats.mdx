@@ -12,37 +12,45 @@ GET https://api.fetchbrain.com/v1/stats
 
 ## Request
 
-No query parameters required. Uses the current billing period by default.
+No query parameters required. Returns usage for the current billing period.
 
 ## Response
 
 ```json
 {
-  "period": "2025-01",
+  "queries": 46753,
   "recognized": 45230,
-  "unknown": 1523,
+  "recognitionRate": 0.97,
   "learned": 1523,
-  "recognitionRate": 0.967,
+  "period": "2026-06",
   "tier": "pro",
-  "limit": 500000,
-  "used": 45230,
-  "remaining": 454770
+  "overageEnabled": true,
+  "limits": {
+    "quota": 500000,
+    "hardCap": 750000,
+    "quotaUsedPercent": 9.0,
+    "hardCapUsedPercent": 6.0
+  },
+  "usageWarning": "none"
 }
 ```
 
 ## Response Fields
 
-| Field             | Type   | Description                      |
-| ----------------- | ------ | -------------------------------- |
-| `period`          | string | Current billing period (YYYY-MM) |
-| `recognized`      | number | Successful AI queries (billable) |
-| `unknown`         | number | URLs AI didn't know              |
-| `learned`         | number | Pages taught to AI               |
-| `recognitionRate` | number | Success ratio (0-1)              |
-| `tier`            | string | Current plan tier                |
-| `limit`           | number | Plan's included queries          |
-| `used`            | number | Queries used this period         |
-| `remaining`       | number | Queries remaining                |
+| Field                       | Type   | Description                                              |
+| --------------------------- | ------ | -------------------------------------------------------- |
+| `queries`                   | number | Total queries this period                                |
+| `recognized`                | number | Queries the AI knew (billable)                           |
+| `recognitionRate`           | number | `recognized / queries`, clamped to 0–1                   |
+| `learned`                   | number | New knowledge taught this period                         |
+| `period`                    | string | Current billing period (`YYYY-MM`)                       |
+| `tier`                      | string | Current plan tier                                        |
+| `overageEnabled`            | boolean| Whether overage billing applies on this tier             |
+| `limits.quota`              | number | Plan's included recognized queries                       |
+| `limits.hardCap`            | number | Absolute monthly ceiling (blocks beyond this)            |
+| `limits.quotaUsedPercent`   | number | Percent of quota used                                    |
+| `limits.hardCapUsedPercent` | number | Percent of hard cap used                                 |
+| `usageWarning`              | string | `none`, `warning` (75%+), `critical` (90%+), `exceeded`  |
 
 ## Examples
 
@@ -61,7 +69,7 @@ const response = await fetch("https://api.fetchbrain.com/v1/stats", {
 
 const stats = await response.json();
 console.log(`Recognition rate: ${(stats.recognitionRate * 100).toFixed(1)}%`);
-console.log(`Used: ${stats.used} / ${stats.limit}`);
+console.log(`Quota used: ${stats.limits.quotaUsedPercent}%`);
 ```
 
 ```python Python
@@ -74,7 +82,7 @@ response = requests.get(
 
 stats = response.json()
 print(f"Recognition rate: {stats['recognitionRate'] * 100:.1f}%")
-print(f"Remaining: {stats['remaining']}")
+print(f"Quota used: {stats['limits']['quotaUsedPercent']}%")
 ```
 
 </CodeGroup>
@@ -84,7 +92,7 @@ print(f"Remaining: {stats['remaining']}")
 Use the stats endpoint to:
 
 - Monitor recognition rates
-- Track usage against limits
+- Track usage against your quota and hard cap
 - Set up alerts for overages
 - Identify optimization opportunities
 
@@ -96,7 +104,7 @@ if (stats.recognitionRate < 0.8) {
   console.warn("Low recognition rate - check if data changed");
 }
 
-if (stats.remaining < 10000) {
-  console.warn("Approaching query limit");
+if (stats.usageWarning === "critical") {
+  console.warn("Approaching hard cap");
 }
 ```

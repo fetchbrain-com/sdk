@@ -1,6 +1,6 @@
 ---
 title: Learn Endpoint
-description: "Teach the AI about a URL"
+description: "Teach the AI about one or more requests"
 openapi: "POST /v1/learn"
 ---
 
@@ -12,51 +12,93 @@ POST https://api.fetchbrain.com/v1/learn
 
 <Note>
   **Learning is always free.** You only pay when the AI successfully returns
-  known data via the Query endpoint.
+  known data via the [Query endpoint](/docs/api-reference/endpoints/query).
 </Note>
+
+Teach FetchBrain new knowledge for one or more requests in a single call. Each
+entry pairs the raw `request` with the `data` you scraped.
+
+<Note>
+  Most developers never build this payload by hand — the [SDK](/docs/sdk/enhance)
+  learns automatically after a successful scrape and batches entries for you.
+</Note>
+
+## How identity works
+
+FetchBrain derives the knowledge key **server-side** from `(method, normalized url, uniqueKey)`.
+The request **body is never part of the key**. For requests that share a URL and
+method (POST or GraphQL endpoints), set a distinct `uniqueKey` per resource so
+each is stored separately. When `uniqueKey` is omitted it defaults to the URL.
 
 ## Request Body
 
 ```json
 {
-  "url": "https://example.com/product/123",
-  "data": {
-    "title": "Product Name",
-    "price": "$99.99",
-    "description": "Product description..."
-  }
+  "entries": [
+    {
+      "request": {
+        "url": "https://example.com/product/123",
+        "method": "GET"
+      },
+      "data": {
+        "title": "Product Name",
+        "price": "$99.99",
+        "description": "Product description..."
+      }
+    }
+  ]
 }
 ```
 
-## Parameters
-
-<ParamField body="url" type="string" required>
-  The URL that was scraped
+<ParamField body="entries" type="array" required>
+  Array of entries to learn. Maximum **50** entries per request.
 </ParamField>
 
-<ParamField body="data" type="object" required>
-  The scraped data to teach the AI
+<ParamField body="entries[].request" type="object" required>
+  The raw request. Must include a non-empty `url`. Optional: `method` (default
+  `GET`), `uniqueKey`, `body`, `headers`, `userData`, `label`. Only `method`,
+  `url`, and `uniqueKey` affect identity.
 </ParamField>
 
-<ParamField body="status" type="number" default="200">
-  HTTP status code of the scraped page
+<ParamField body="entries[].data" type="object" required>
+  The scraped data to teach the AI. Maximum **100 KB** per entry.
 </ParamField>
 
 ## Response
 
+Returns HTTP `201`.
+
 ```json
 {
-  "success": true,
-  "message": "Content learned successfully"
+  "learned": 1,
+  "status": "success"
+}
+```
+
+If some entries were invalid, valid entries are still learned and the response
+reports `partial` with an `errors` array:
+
+```json
+{
+  "learned": 1,
+  "status": "partial",
+  "errors": ["Entry 1: data must be an object"]
 }
 ```
 
 ## Response Fields
 
-| Field     | Type    | Description                |
-| --------- | ------- | -------------------------- |
-| `success` | boolean | Whether learning succeeded |
-| `message` | string  | Status message             |
+| Field     | Type   | Description                                                      |
+| --------- | ------ | ---------------------------------------------------------------- |
+| `learned` | number | How many entries were stored                                     |
+| `status`  | string | `success`, `partial` (some invalid), or `rejected`               |
+| `errors`  | array  | Per-entry validation messages (present only when `partial`)      |
+
+<Note>
+  Learning is not available on the free tier beyond its monthly learn cap. When
+  the cap is reached the request returns `403 FORBIDDEN` with
+  `details.code = "LEARN_CAP_EXCEEDED"`.
+</Note>
 
 ## Examples
 
@@ -66,11 +108,12 @@ curl -X POST "https://api.fetchbrain.com/v1/learn" \
   -H "Authorization: Bearer fb_live_your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "https://example.com/product/123",
-    "data": {
-      "title": "Product Name",
-      "price": "$99.99"
-    }
+    "entries": [
+      {
+        "request": { "url": "https://example.com/product/123" },
+        "data": { "title": "Product Name", "price": "$99.99" }
+      }
+    ]
   }'
 ```
 
@@ -82,16 +125,17 @@ const response = await fetch("https://api.fetchbrain.com/v1/learn", {
     "Content-Type": "application/json",
   },
   body: JSON.stringify({
-    url: "https://example.com/product/123",
-    data: {
-      title: "Product Name",
-      price: "$99.99",
-    },
+    entries: [
+      {
+        request: { url: "https://example.com/product/123" },
+        data: { title: "Product Name", price: "$99.99" },
+      },
+    ],
   }),
 });
 
 const result = await response.json();
-console.log("Learned:", result.success);
+console.log("Learned:", result.learned, "status:", result.status);
 ```
 
 ```python Python
@@ -101,26 +145,29 @@ response = requests.post(
     "https://api.fetchbrain.com/v1/learn",
     headers={
         "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     },
     json={
-        "url": "https://example.com/product/123",
-        "data": {
-            "title": "Product Name",
-            "price": "$99.99"
-        }
-    }
+        "entries": [
+            {
+                "request": {"url": "https://example.com/product/123"},
+                "data": {"title": "Product Name", "price": "$99.99"},
+            }
+        ]
+    },
 )
 
 result = response.json()
-print(f"Success: {result['success']}")
+print(f"Learned: {result['learned']} ({result['status']})")
 ```
 
 </CodeGroup>
 
 ## Best Practices
 
-1. **Batch learning** - Group multiple learns together when possible
-2. **Clean data** - Remove unnecessary whitespace and formatting
-3. **Include relevant fields** - Only teach data you'll query later
-4. **Use consistent schemas** - Same fields for same page types
+1. **Batch learning** - Send multiple entries in one request (up to 50).
+2. **Set `uniqueKey` for POST/GraphQL** - Distinct resources sharing a URL must
+   each carry a distinct `uniqueKey`, or they collide.
+3. **Clean data** - Remove unnecessary whitespace and formatting.
+4. **Include relevant fields** - Only teach data you'll query later.
+5. **Use consistent schemas** - Same fields for the same page types.

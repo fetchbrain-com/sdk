@@ -36,8 +36,10 @@ const crawler = FetchBrain.enhance(
 ```
 
 <Note>
-  To access `ai` in your handler, set `alwaysRun: true`. Otherwise, the handler
-  is skipped when AI knows the page.
+  By default, when the AI knows a page the handler is skipped entirely — so the
+  only time your handler runs and can read `ai.known === true` is when you opt in
+  with `alwaysRun` (either `true`, or a label list that matches this request).
+  Without `alwaysRun`, the handler only runs for pages the AI does **not** know.
 </Note>
 
 ## AI Context Properties
@@ -51,11 +53,7 @@ const crawler = FetchBrain.enhance(
 </ParamField>
 
 <ParamField body="confidence" type="number">
-  Confidence score from 0 to 1
-</ParamField>
-
-<ParamField body="learnedAt" type="string">
-  ISO timestamp of when the AI learned this page
+  Confidence score from 0 to 1 (present when known)
 </ParamField>
 
 <ParamField body="useAIData" type="() => Promise<void>">

@@ -44,17 +44,28 @@ If the AI doesn't respond within the timeout, the SDK:
 2. Runs your handler normally
 3. Increments the failure counter
 
-After 5 consecutive failures, the circuit opens.
+After 3 consecutive failures, the circuit opens.
 
 ## Circuit Breaker Settings
 
 The default circuit breaker:
 
-- Opens after 5 consecutive failures
-- Stays open for 30 seconds
-- Tests with 1 request in half-open state
+- Opens after **3** consecutive failures (`failureThreshold`)
+- Stays open for **30 seconds** (`resetTimeout`)
+- Closes after **1** successful probe in half-open state (`successThreshold`)
 
-These defaults are optimized for production use and cannot be overridden.
+You can override these via the `circuitBreaker` option:
+
+```typescript
+const crawler = FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  circuitBreaker: {
+    failureThreshold: 5,
+    resetTimeout: 60000,
+    successThreshold: 2,
+  },
+});
+```
 
 ## Monitoring
 

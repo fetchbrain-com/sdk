@@ -11,19 +11,19 @@ FetchBrain automatically batches individual URL queries into bulk API calls to r
 
 When running multiple concurrent requests, the SDK:
 
-1. Queues individual URL queries
-2. Waits for a short window (10ms)
-3. Sends all queued URLs in a single API request
-4. Returns results to each caller
+1. Queues individual request queries
+2. Waits for a short window
+3. Sends all queued requests as `items` in a single API call
+4. Returns results to each caller, matched by `ref`
 
 ```
-Concurrent requests:  URL1, URL2, URL3, URL4, URL5
+Concurrent requests:  req1, req2, req3, req4, req5
                            ↓
-Batched into:         [URL1, URL2, URL3, URL4, URL5]
+Batched into items:   [{ ref, request }, ...]
                            ↓
-Single API call:      POST /v1/query { urls: [...] }
+Single API call:      POST /v1/query { items: [...] }
                            ↓
-Results distributed:  Result1, Result2, Result3...
+Results distributed:  matched back to each caller by ref
 ```
 
 ## Benefits
@@ -55,11 +55,13 @@ await crawler.run(urls); // 100 URLs → ~2 API calls
 
 ## API Support
 
-The `/v1/query` API endpoint accepts multiple URLs in a single request:
+The `/v1/query` API endpoint accepts multiple items in a single request:
 
-- Maximum **100 URLs** per request
-- Returns `known` and `unknown` arrays
-- Billable per recognized URL
+- Maximum **100 items** per request
+- Returns `known` and `unknown` arrays, each keyed by your `ref`
+- Billable per recognized item
+
+The `/v1/learn` endpoint batches the same way, up to **50 entries** per request.
 
 ## When Batching Helps
 

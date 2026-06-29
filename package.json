@@ -1,7 +1,7 @@
 {
   "name": "@fetchbrain.com/sdk",
   "version": "0.2.0",
-  "description": "FetchBrain SDK — the AI cache for web scrapers; query before you fetch, teach what you learn.",
+  "description": "FetchBrain SDK — give your Crawlee scraper an AI that already knows the web; ask before you fetch, teach what you learn.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
       "require": "./dist/index.js"
+    },
+    "./mock": {
+      "types": "./dist/mock/index.d.ts",
+      "import": "./dist/mock/index.mjs",
+      "require": "./dist/mock/index.js"
     }
   },
   "files": [

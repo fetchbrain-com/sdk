@@ -9,6 +9,11 @@ The SDK includes a mock client for unit testing without hitting the production A
 
 ## MockFetchBrain
 
+`MockFetchBrain` mirrors the real client: `query()` and `learn()` take a raw
+request object (`{ url, method?, uniqueKey?, ... }`), and `initialKnowledge` is a
+`Map` keyed by URL. The mock derives the same `(method, url, uniqueKey)` identity
+the API does, so a query matches what you seeded.
+
 ```typescript
 import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
 
@@ -19,21 +24,16 @@ const mock = new MockFetchBrain({
   ]),
 });
 
-// Use in tests
-const result = await mock.query("https://example.com/product/1");
+// query() takes a request object, not a bare string
+const result = await mock.query({ url: "https://example.com/product/1" });
 expect(result.known).toBe(true);
-expect(result.data.title).toBe("Known Product");
+expect(result.data?.title).toBe("Known Product");
 ```
 
 ## With Jest
 
 ```typescript
-import { FetchBrain, MockFetchBrain } from "@fetchbrain.com/sdk";
-
-jest.mock("@fetchbrain.com/sdk", () => ({
-  ...jest.requireActual("@fetchbrain.com/sdk"),
-  FetchBrain: jest.fn().mockImplementation(() => new MockFetchBrain()),
-}));
+import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
 
 describe("My Scraper", () => {
   it("uses AI data when known", async () => {
@@ -51,8 +51,23 @@ describe("My Scraper", () => {
     const result = await mock.query({ url: "https://newsite.com" });
     expect(result.known).toBe(false);
   });
+
+  it("learns new data", async () => {
+    const mock = new MockFetchBrain();
+
+    await mock.learn(
+      { url: "https://example.com/new" },
+      { title: "Freshly scraped" }
+    );
+
+    const result = await mock.query({ url: "https://example.com/new" });
+    expect(result.known).toBe(true);
+  });
 });
 ```
+
+`MockFetchBrain` also exposes test helpers: `seed([{ url, data }])`,
+`clear()`, `has(url)`, and `getKnowledgeSize()`.
 
 ## Mock Server
 

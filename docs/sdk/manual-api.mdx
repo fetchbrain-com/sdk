@@ -6,6 +6,17 @@ description: "Use FetchBrain without Crawlee"
 ## Overview
 
 For custom integrations or non-Crawlee scrapers, use the FetchBrain class directly.
+The class exposes URL-based convenience methods that build the underlying
+batch wire (`{ items: [{ ref, request }] }` for query, `{ entries: [{ request, data }] }`
+for learn) for you.
+
+<Note>
+  Identity is derived **server-side** from `(method, normalized url, uniqueKey)`.
+  The `FetchBrain.query({ url })` / `learn({ url, data })` helpers key by URL. If
+  you scrape several distinct resources behind one URL (POST or GraphQL
+  endpoints), call the lower-level client with a `uniqueKey` so each is stored
+  separately — see [the Query endpoint](/docs/api-reference/endpoints/query).
+</Note>
 
 ## Basic Usage
 
@@ -46,11 +57,10 @@ const result = await ai.query({
 **Returns:**
 
 ```typescript
-interface QueryResult {
+{
   known: boolean;
-  data?: object;
-  confidence?: number;
-  learnedAt?: string;
+  data?: object;       // present when known
+  confidence?: number; // 0–1, present when known
 }
 ```
 
@@ -73,10 +83,11 @@ Get your usage statistics.
 const stats = await ai.stats();
 console.log(stats);
 // {
+//   queries: 46753,
 //   recognized: 45230,
-//   unknown: 1523,
+//   recognitionRate: 0.97,
 //   learned: 1523,
-//   recognitionRate: 0.967
+//   period: "2026-06"
 // }
 ```
 

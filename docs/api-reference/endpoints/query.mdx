@@ -1,84 +1,142 @@
 ---
 title: Query Endpoint
-description: "Check if the AI knows a URL"
-openapi: "GET /v1/query"
+description: "Ask whether the AI already knows one or more requests"
+openapi: "POST /v1/query"
 ---
 
 ## Endpoint
 
 ```http
-GET https://api.fetchbrain.com/v1/query
+POST https://api.fetchbrain.com/v1/query
 ```
 
-## Query Parameters
+Ask FetchBrain whether it already knows the result for one or more requests, in a
+single call. Each item carries a client-supplied `ref` (a correlation id you
+choose) and the raw `request`. The API echoes the `ref` back so you can match
+results to inputs regardless of order.
 
-<ParamField query="url" type="string" required>
-  The URL to check
+<Note>
+  Most developers never build this payload by hand — the [SDK](/docs/sdk/enhance)
+  constructs it for you and batches concurrent queries automatically. Use the raw
+  HTTP API only for custom (non-Crawlee) integrations.
+</Note>
+
+## How identity works
+
+FetchBrain derives the knowledge key **server-side** from `(method, normalized url, uniqueKey)`.
+The request **body is never part of the key** — it carries volatile data
+(timestamps, nonces, paging cursors). If you scrape several distinct resources
+that share one URL and method (for example POST or GraphQL endpoints), set a
+distinct `uniqueKey` per resource so each is recognized separately. When
+`uniqueKey` is omitted it defaults to the URL.
+
+## Request Body
+
+```json
+{
+  "items": [
+    {
+      "ref": "item-1",
+      "request": {
+        "url": "https://example.com/product/123",
+        "method": "GET",
+        "uniqueKey": "product-123"
+      }
+    }
+  ],
+  "intelligence": "high"
+}
+```
+
+<ParamField body="items" type="array" required>
+  Array of items to look up. Maximum **100** items per request.
 </ParamField>
 
-<ParamField query="intelligence" type="string" default="high">
-  Intelligence level: `realtime`, `high`, `standard`, or `deep`
+<ParamField body="items[].ref" type="string" required>
+  A correlation id you choose. The API echoes it back in the response so you can
+  match results to inputs.
+</ParamField>
+
+<ParamField body="items[].request" type="object" required>
+  The raw request. Must include a non-empty `url`. Optional: `method` (default
+  `GET`), `uniqueKey`, `body`, `headers`, `userData`, `label`. Only `method`,
+  `url`, and `uniqueKey` affect identity.
+</ParamField>
+
+<ParamField body="intelligence" type="string" default="high">
+  Intelligence level: `realtime`, `high`, `standard`, or `deep`. Controls how
+  fresh recognized data must be.
+</ParamField>
+
+<ParamField body="build" type="string">
+  Optional build id. When set, only data learned by the same build is recognized
+  (used by `refreshOnRebuild`).
 </ParamField>
 
 ## Response
 
-### Recognized (AI knows the URL)
-
 ```json
 {
-  "status": "recognized",
-  "known": true,
-  "confidence": 0.95,
-  "data": {
-    "title": "Product Name",
-    "price": "$99.99"
-  },
-  "learnedAt": "2025-01-15T10:00:00Z"
-}
-```
-
-### Unknown (AI doesn't know)
-
-```json
-{
-  "status": "unknown",
-  "known": false,
-  "message": "URL not recognized. Consider teaching via POST /learn"
+  "known": [
+    {
+      "ref": "item-1",
+      "confidence": 0.95,
+      "data": {
+        "title": "Product Name",
+        "price": "$99.99"
+      }
+    }
+  ],
+  "unknown": ["item-2"]
 }
 ```
 
 ## Response Fields
 
-| Field        | Type    | Description                     |
-| ------------ | ------- | ------------------------------- |
-| `status`     | string  | `recognized` or `unknown`       |
-| `known`      | boolean | Whether AI knows this URL       |
-| `confidence` | number  | Confidence score 0-1 (if known) |
-| `data`       | object  | Known data (if recognized)      |
-| `learnedAt`  | string  | ISO timestamp (if known)        |
+| Field               | Type   | Description                                            |
+| ------------------- | ------ | ------------------------------------------------------ |
+| `known`             | array  | Recognized items                                       |
+| `known[].ref`       | string | The `ref` you supplied                                 |
+| `known[].confidence`| number | Confidence score 0–1 (decays as data ages)             |
+| `known[].data`      | object | The knowledge FetchBrain returned                      |
+| `unknown`           | array  | The `ref`s FetchBrain does not yet know                |
 
 ## Examples
 
 <CodeGroup>
 ```bash cURL
-curl -X GET "https://api.fetchbrain.com/v1/query?url=https://example.com/product/123" \
-  -H "Authorization: Bearer fb_live_your_api_key"
+curl -X POST "https://api.fetchbrain.com/v1/query" \
+  -H "Authorization: Bearer fb_live_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      { "ref": "item-1", "request": { "url": "https://example.com/product/123" } }
+    ],
+    "intelligence": "high"
+  }'
 ```
 
 ```javascript JavaScript
-const response = await fetch(
-  "https://api.fetchbrain.com/v1/query?url=https://example.com/product/123",
-  {
-    headers: {
-      Authorization: `Bearer ${process.env.FETCHBRAIN_API_KEY}`,
-    },
-  }
-);
+const response = await fetch("https://api.fetchbrain.com/v1/query", {
+  method: "POST",
+  headers: {
+    Authorization: `Bearer ${process.env.FETCHBRAIN_API_KEY}`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify({
+    items: [
+      { ref: "item-1", request: { url: "https://example.com/product/123" } },
+    ],
+    intelligence: "high",
+  }),
+});
 
 const result = await response.json();
+const known = new Set(result.known.map((k) => k.ref));
 
-if (result.known) {
-  console.log("AI data:", result.data);
+if (known.has("item-1")) {
+  const hit = result.known.find((k) => k.ref === "item-1");
+  console.log("AI data:", hit.data, "confidence:", hit.confidence);
 } else {
   console.log("Need to scrape");
 }
@@ -87,14 +145,23 @@ if (result.known) {
 ```python Python
 import requests
 
-response = requests.get(
+response = requests.post(
     "https://api.fetchbrain.com/v1/query",
-    params={"url": "https://example.com/product/123"},
-    headers={"Authorization": f"Bearer {API_KEY}"}
+    headers={
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    },
+    json={
+        "items": [
+            {"ref": "item-1", "request": {"url": "https://example.com/product/123"}}
+        ],
+        "intelligence": "high",
+    },
 )
 
 result = response.json()
-print(f"Known: {result['known']}")
+known_refs = {k["ref"] for k in result["known"]}
+print(f"item-1 known: {'item-1' in known_refs}")
 ```
 
 </CodeGroup>

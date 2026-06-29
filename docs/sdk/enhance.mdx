@@ -36,13 +36,32 @@ interface FetchBrainConfig {
 
   // Optional
   baseUrl?: string; // API URL (default: production)
-  intelligence?: IntelligenceLevel; // AI accuracy level
+  intelligence?: IntelligenceLevel; // AI accuracy level (default: "high")
   learning?: boolean; // Enable AI learning (default: true)
-  alwaysRun?: boolean | string | string[]; // Which handlers to run
-  timeout?: number; // Request timeout in ms (default: 500)
-  debug?: boolean; // Enable debug logging
+  alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
+  refreshOnRebuild?: boolean; // Only reuse data from the same build (default: false)
+  timeout?: number; // Query timeout in ms (default: 500)
+  debug?: boolean; // Enable debug logging (default: false)
+
+  // Learning shaping
+  extractForLearning?: (data: unknown) => Record<string, unknown>; // Transform data before learning
+  learnUrlField?: string; // Field to use as URL for learning
+
+  // Advanced
+  batch?: Partial<BatchConfig>; // Request batching tuning
+  circuitBreaker?: Partial<CircuitBreakerConfig>; // Graceful-degradation tuning
+  telemetry?: TelemetryConfig; // Opt-in anonymous telemetry
 }
 ```
+
+<Note>
+  FetchBrain derives each request's identity **server-side** from
+  `(method, normalized url, uniqueKey)` — the body is never part of the key. For
+  Crawlee requests that share a URL and method (POST or GraphQL endpoints), set a
+  distinct `request.uniqueKey` so each is recognized separately. The SDK warns
+  once per URL when a non-GET request has a default `uniqueKey`. Credentials are
+  protected: the SDK strips `Authorization` and `Cookie` headers before sending.
+</Note>
 
 ## Parameters
 
@@ -62,12 +81,43 @@ interface FetchBrainConfig {
   Control which handlers run when AI knows the page
 </ParamField>
 
+<ParamField body="refreshOnRebuild" type="boolean" default="false">
+  Only reuse knowledge learned by the current build (uses
+  `APIFY_ACTOR_BUILD_ID`). When a scraper is rebuilt, it re-scrapes instead of
+  returning stale data.
+</ParamField>
+
 <ParamField body="timeout" type="number" default="500">
   Timeout in milliseconds for AI queries
 </ParamField>
 
 <ParamField body="debug" type="boolean" default="false">
   Enable debug logging to console
+</ParamField>
+
+<ParamField body="extractForLearning" type="(data) => object">
+  Transform scraped data before it is taught to the AI (e.g. strip large or
+  volatile fields).
+</ParamField>
+
+<ParamField body="learnUrlField" type="string">
+  Use a field from the scraped data as the URL for learning, when the request
+  URL is an API endpoint but the data carries the real page URL.
+</ParamField>
+
+<ParamField body="batch" type="object">
+  Request-batching tuning (`maxSize`, `maxWait`). See
+  [Request Batching](/docs/advanced/batching).
+</ParamField>
+
+<ParamField body="circuitBreaker" type="object">
+  Circuit-breaker tuning. See
+  [Graceful Degradation](/docs/advanced/graceful-degradation).
+</ParamField>
+
+<ParamField body="telemetry" type="object">
+  Opt-in anonymous telemetry (`{ enabled: true }`). No PII, URLs, or credentials
+  are ever sent.
 </ParamField>
 
 ## Supported Crawlers

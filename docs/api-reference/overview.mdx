@@ -21,29 +21,41 @@ Get your API key from [Dashboard → API Keys](https://fetchbrain.com/dashboard/
 
 ## Endpoints
 
-| Method | Endpoint    | Description             |
-| ------ | ----------- | ----------------------- |
-| GET    | `/v1/query` | Check if AI knows a URL |
-| POST   | `/v1/learn` | Teach AI about a URL    |
-| GET    | `/v1/stats` | Get usage statistics    |
+| Method | Endpoint    | Description                              |
+| ------ | ----------- | ---------------------------------------- |
+| POST   | `/v1/query` | Ask whether the AI knows one or more requests |
+| POST   | `/v1/learn` | Teach the AI about one or more requests  |
+| GET    | `/v1/stats` | Get usage statistics                     |
+
+Both `/v1/query` and `/v1/learn` are batch endpoints — send an array of items
+(query) or entries (learn) in a single request.
+
+## How identity works
+
+FetchBrain derives the knowledge key **server-side** from
+`(method, normalized url, uniqueKey)`. The request **body is never part of the
+key** — it carries volatile data. To distinguish resources that share a URL and
+method (POST or GraphQL endpoints), set a distinct `uniqueKey` on each request.
 
 ## Error Responses
 
-All errors return JSON:
+All errors return JSON with `error`, `code`, and an optional `details`:
 
 ```json
 {
-  "error": "Invalid API key",
+  "error": "Invalid or missing API key",
   "code": "UNAUTHORIZED"
 }
 ```
 
-| Code           | HTTP Status | Description                |
-| -------------- | ----------- | -------------------------- |
-| `UNAUTHORIZED` | 401         | Invalid or missing API key |
-| `RATE_LIMITED` | 429         | Rate limit exceeded        |
-| `BAD_REQUEST`  | 400         | Invalid request parameters |
-| `SERVER_ERROR` | 500         | Internal server error      |
+| Code             | HTTP Status | Description                                                   |
+| ---------------- | ----------- | ------------------------------------------------------------- |
+| `UNAUTHORIZED`   | 401         | Invalid or missing API key                                    |
+| `FORBIDDEN`      | 403         | Not allowed (e.g. tier limit; `details.code` may be `HARD_CAP_EXCEEDED` or `LEARN_CAP_EXCEEDED`) |
+| `BAD_REQUEST`    | 400         | Invalid request parameters                                    |
+| `RATE_LIMITED`   | 429         | Too many requests (abuse protection)                          |
+| `NOT_FOUND`      | 404         | Endpoint not found                                            |
+| `INTERNAL_ERROR` | 500         | Internal server error                                         |
 
 ## SDKs
 
