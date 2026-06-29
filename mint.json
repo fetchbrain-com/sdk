@@ -2,8 +2,8 @@
   "$schema": "https://mintlify.com/schema.json",
   "name": "FetchBrain",
   "logo": {
-    "dark": "/logo/dark.svg",
-    "light": "/logo/light.svg"
+    "dark": "/logo/logo.svg",
+    "light": "/logo/logo.svg"
   },
   "favicon": "/favicon.svg",
   "colors": {
