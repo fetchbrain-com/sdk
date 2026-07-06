@@ -1,5 +1,6 @@
 # SDK Publish Workflow
-# Publishes to npm on version tags or manual dispatch
+# Publishes to npm via OIDC Trusted Publishers (no NPM_TOKEN needed)
+# Requires trusted publisher configured on npmjs.com for this repo + workflow
 
 name: Publish to npm
 
@@ -30,7 +31,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # Required for npm provenance
+      id-token: write # Required for OIDC trusted publishing
 
     steps:
       - name: Checkout
@@ -39,7 +40,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           registry-url: "https://registry.npmjs.org"
 
@@ -83,14 +84,10 @@ jobs:
       - name: Publish to npm (dry run)
         if: github.event.inputs.dry_run == 'true'
         run: npm publish --dry-run --tag ${{ steps.npm_tag.outputs.TAG }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish to npm
         if: github.event.inputs.dry_run != 'true'
         run: npm publish --provenance --access public --tag ${{ steps.npm_tag.outputs.TAG }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Summary
         run: |
@@ -100,4 +97,5 @@ jobs:
           echo "- **Package**: @fetchbrain.com/sdk" >> $GITHUB_STEP_SUMMARY
           echo "- **Version**: $VERSION" >> $GITHUB_STEP_SUMMARY
           echo "- **Tag**: ${{ steps.npm_tag.outputs.TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Auth**: OIDC Trusted Publisher" >> $GITHUB_STEP_SUMMARY
           echo "- **Registry**: https://www.npmjs.com/package/@fetchbrain.com/sdk" >> $GITHUB_STEP_SUMMARY
