@@ -4,16 +4,8 @@
  * Type definitions for the FetchBrain AI-powered scraping optimization SDK.
  */
 
-/** Intelligence level for AI inference accuracy */
-export type IntelligenceLevel = "realtime" | "high" | "standard" | "deep";
-
-/** AI memory depth levels - deeper memory may have minor hallucinations */
-export enum AIMemoryDepth {
-  REALTIME = 1,
-  HIGH = 2,
-  STANDARD = 3,
-  DEEP = 4,
-}
+/** How far back the brain recalls: fresh=1h, recent=24h, standard=7d, deep=30d */
+export type MemoryDepth = "fresh" | "recent" | "standard" | "deep";
 
 /** Configuration for FetchBrain SDK */
 export interface FetchBrainConfig {
@@ -23,8 +15,8 @@ export interface FetchBrainConfig {
   /** Base URL for API (defaults to production) */
   baseUrl?: string;
 
-  /** Intelligence level for AI responses */
-  intelligence?: IntelligenceLevel;
+  /** How far back the brain recalls: fresh=1h, recent=24h, standard=7d, deep=30d */
+  memory?: MemoryDepth;
 
   /** Whether AI should learn from new pages */
   learning?: boolean;
@@ -36,7 +28,7 @@ export interface FetchBrainConfig {
    * - string[]: Only run handlers with these labels (e.g., ['listing', 'category'])
    * - 'default': Only run the default handler
    *
-   * AI data always available via context.ai
+   * Recalled data always available via context.brain
    */
   alwaysRun?: boolean | string | string[];
 
@@ -44,9 +36,9 @@ export interface FetchBrainConfig {
   extractForLearning?: (data: unknown) => Record<string, unknown>;
 
   /**
-   * If true, only return recognized data from the same build version.
+   * If true, only return known data from the same build version.
    * When a scraper updates, it will re-scrape instead of using stale data.
-   * Uses APIFY_ACTOR_BUILD_ID environment variable.
+   * Uses the platform's native build identifier, auto-detected from the environment.
    * Default: false
    */
   refreshOnRebuild?: boolean;
@@ -92,23 +84,22 @@ export interface RawRequest {
   label?: string;
 }
 
-/** Query request to the API */
-export interface QueryRequest {
+/** Recall request to the API */
+export interface RecallRequest {
   items: { ref: string; request: RawRequest }[];
-  intelligence: IntelligenceLevel;
+  memory: MemoryDepth;
   build?: string;
 }
 
-/** Single query result (matched by ref) */
-export interface QueryResultItem {
+/** Single recall result (matched by ref) */
+export interface RecallResultItem {
   ref: string;
   data?: Record<string, unknown>;
-  confidence?: number;
 }
 
-/** Query response from the API */
-export interface QueryResponse {
-  known: { ref: string; data: Record<string, unknown>; confidence: number }[];
+/** Recall response from the API */
+export interface RecallResponse {
+  known: { ref: string; data: Record<string, unknown> }[];
   unknown: string[]; // refs
 }
 
@@ -127,19 +118,25 @@ export interface LearnResponse {
 /** Stats response from the API */
 export interface StatsResponse {
   queries: number;
-  recognized: number;
-  recognitionRate: number;
+  known: number;
+  recallRate: number;
   learned: number;
   period: string;
 }
 
-/** Result from AI knowledge query */
-export interface AIResult {
+/** Result from AI knowledge recall */
+export interface RecallResult {
   known: boolean;
   data?: Record<string, unknown>;
-  confidence?: number;
-  // Note: No learnedAt - API returns pure AI response
+  // Note: No learnedAt
   fallback?: boolean; // True if circuit breaker triggered fallback
+}
+
+/** Response from a natural-language ask against learned knowledge */
+export interface AskResponse {
+  sources: { score: number; url?: string; data: unknown }[];
+  answer?: string;
+  status: "ok" | "unavailable";
 }
 
 /** Circuit breaker states */

@@ -27,7 +27,7 @@ const crawler = FetchBrain.enhance(
   }),
   {
     apiKey: process.env.FETCHBRAIN_API_KEY!,
-    intelligence: "high",
+    memory: "recent",
   }
 );
 
@@ -116,17 +116,17 @@ Without Crawlee:
 ```typescript
 import { FetchBrain } from "@fetchbrain.com/sdk";
 
-const ai = new FetchBrain({
+const brain = new FetchBrain({
   apiKey: process.env.FETCHBRAIN_API_KEY!,
 });
 
 async function scrapeProduct(url: string) {
-  // 1. Check AI first
-  const aiResult = await ai.query({ url });
+  // 1. Check the brain first
+  const recalled = await brain.recall({ url });
 
-  if (aiResult.known) {
-    console.log("Using AI data");
-    return aiResult.data;
+  if (recalled.known) {
+    console.log("Using brain data");
+    return recalled.data;
   }
 
   // 2. Fetch if unknown
@@ -135,8 +135,8 @@ async function scrapeProduct(url: string) {
   const html = await res.text();
   const data = parseProduct(html);
 
-  // 3. Teach AI
-  await ai.learn({ url, data });
+  // 3. Teach the brain
+  await brain.learn({ url, data });
 
   return data;
 }

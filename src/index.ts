@@ -17,7 +17,7 @@
  *   },
  * }), {
  *   apiKey: process.env.FETCHBRAIN_API_KEY,
- *   intelligence: 'high',  // High confidence AI responses
+ *   memory: 'recent',      // How far back the brain recalls
  *   learning: true,        // AI learns from scraped pages
  * });
  *
@@ -47,15 +47,16 @@ export type { CrawleeContext, RequestTiming } from "./telemetry";
 // Types
 export type {
   FetchBrainConfig,
-  IntelligenceLevel,
+  MemoryDepth,
   RawRequest,
-  QueryRequest,
-  QueryResponse,
-  QueryResultItem,
+  RecallRequest,
+  RecallResponse,
+  RecallResultItem,
   LearnRequest,
   LearnResponse,
   StatsResponse,
-  AIResult,
+  RecallResult,
+  AskResponse,
   CircuitState,
   CircuitBreakerConfig,
   BatchConfig,
@@ -67,6 +68,3 @@ export type {
   TelemetryRequest,
   TelemetryResponse,
 } from "./types";
-
-// Enums
-export { AIMemoryDepth } from "./types";

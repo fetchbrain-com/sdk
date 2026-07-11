@@ -52,7 +52,7 @@
       "group": "SDK Guide",
       "pages": [
         "docs/sdk/enhance",
-        "docs/sdk/intelligence-levels",
+        "docs/sdk/memory-depth",
         "docs/sdk/ai-context",
         "docs/sdk/always-run",
         "docs/sdk/manual-api"
@@ -72,7 +72,8 @@
       "pages": [
         "docs/api-reference/overview",
         "docs/api-reference/authentication",
-        "docs/api-reference/endpoints/query",
+        "docs/api-reference/endpoints/recall",
+        "docs/api-reference/endpoints/ask",
         "docs/api-reference/endpoints/learn",
         "docs/api-reference/endpoints/stats"
       ]

@@ -45,7 +45,7 @@ const crawler = FetchBrain.enhance(
   }),
   {
     apiKey: process.env.FETCHBRAIN_API_KEY,
-    intelligence: "high",
+    memory: "recent",
     learning: true,
   }
 );
@@ -69,14 +69,14 @@ That's it! 🎉 Your scraper now:
 
 <CardGroup cols={2}>
   <Card
-    title="Intelligence Levels"
+    title="Memory Depth"
     icon="brain"
-    href="/docs/sdk/intelligence-levels"
+    href="/docs/sdk/memory-depth"
   >
-    Configure AI confidence thresholds
+    Configure how far back the brain recalls
   </Card>
-  <Card title="AI Context" icon="sparkles" href="/docs/sdk/ai-context">
-    Access AI data in your handler
+  <Card title="Brain Context" icon="sparkles" href="/docs/sdk/ai-context">
+    Access brain data in your handler
   </Card>
   <Card title="Always Run Mode" icon="play" href="/docs/sdk/always-run">
     Control which handlers run

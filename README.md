@@ -4,15 +4,15 @@
 
 **The AI that already knows the web.**
 
-`@fetchbrain.com/sdk` — AI-powered scraping optimization for Crawlee. Query before you fetch; teach what you learn.
+`@fetchbrain.com/sdk` — AI-powered scraping optimization for Crawlee. Recall before you fetch; teach what you learn.
 
 [![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-FetchBrain is AI-powered web intelligence for scrapers. Ask first — if the AI already knows the URL, you get the data instantly and the HTTP request is skipped entirely. If it doesn't, your scraper runs as normal and teaches FetchBrain for next time.
+FetchBrain is an AI-powered brain for scrapers. Ask first — if the AI already knows the URL, you get the data instantly and the HTTP request is skipped entirely. If it doesn't, your scraper runs as normal and teaches FetchBrain for next time.
 
 ## Features
 
-- 🚀 **Instant Results** - Skip redundant HTTP requests with pre-trained knowledge
+- 🚀 **Instant Results** - Skip redundant HTTP requests with memory it has already learned
 - 🔄 **Auto-Learning** - AI automatically learns from scraped pages
 - 🛡️ **Graceful Degradation** - Circuit breaker ensures your scraper never fails
 - 📦 **Request Batching** - Optimized for high-concurrency scrapers
@@ -43,7 +43,7 @@ const crawler = FetchBrain.enhance(
   }),
   {
     apiKey: process.env.FETCHBRAIN_API_KEY,
-    intelligence: "high", // High confidence AI responses
+    memory: "recent", // How far back the brain recalls
     learning: true, // AI learns from scraped pages
   },
 );
@@ -71,7 +71,7 @@ interface FetchBrainConfig {
 
   // Optional
   baseUrl?: string; // API URL (default: production)
-  intelligence?: IntelligenceLevel; // AI accuracy level
+  memory?: MemoryDepth; // How far back the brain recalls
   learning?: boolean; // Enable AI learning (default: true)
   alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
   timeout?: number; // Request timeout in ms (default: 500)
@@ -79,14 +79,14 @@ interface FetchBrainConfig {
 }
 ```
 
-### Intelligence Levels
+### Memory Depth
 
-| Level      | Description                         |
-| ---------- | ----------------------------------- |
-| `realtime` | Live AI inference, highest accuracy |
-| `high`     | High confidence responses           |
-| `standard` | Balanced accuracy and speed         |
-| `deep`     | Deep knowledge, broader coverage    |
+| Depth      | Window | Description                               |
+| ---------- | ------ | ------------------------------------------ |
+| `fresh`    | 1h     | Only the most recent knowledge             |
+| `recent`   | 24h    | Default — balanced recall window           |
+| `standard` | 7d     | Broader recall for slower-changing pages   |
+| `deep`     | 30d    | Deepest recall, broadest coverage          |
 
 ### Always Run Mode
 
@@ -113,28 +113,28 @@ FetchBrain.enhance(crawler, { alwaysRun: ["listing", "category"] });
 | `'listing'`               | Only run handler with label 'listing' |
 | `['listing', 'category']` | Run handlers with these labels        |
 
-## AI Context in Handler
+## Brain Context in Handler
 
-Access AI data directly in your handler via `context.ai`:
+Access brain data directly in your handler via `context.brain`:
 
 ```typescript
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
-    requestHandler: async ({ $, request, ai, pushData }) => {
-      // Check if AI already knows this page
-      if (ai?.known && ai.confidence! > 0.9) {
-        console.log("AI knows this page with high confidence");
+    requestHandler: async ({ $, request, brain, pushData }) => {
+      // Check if the brain already knows this page
+      if (brain?.known) {
+        console.log("Brain knows this page");
 
-        // Option 1: Use AI data directly (skip scraping)
-        await ai.useAIData();
+        // Option 1: Use brain data directly (skip scraping)
+        await brain.use();
         return;
 
-        // Option 2: Compare AI data with scraped data
+        // Option 2: Compare brain data with scraped data
         // const scraped = { title: $('h1').text() };
-        // console.log('AI:', ai.data, 'Scraped:', scraped);
+        // console.log('Brain:', brain.data, 'Scraped:', scraped);
       }
 
-      // Scrape normally if AI doesn't know
+      // Scrape normally if the brain doesn't know
       const data = { title: $("h1").text() };
       await pushData(data);
     },
@@ -143,15 +143,13 @@ const crawler = FetchBrain.enhance(
 );
 ```
 
-### `context.ai` Properties
+### `context.brain` Properties
 
-| Property      | Type     | Description                    |
-| ------------- | -------- | ------------------------------ |
-| `known`       | boolean  | Whether AI knows this URL      |
-| `data`        | object   | AI data (if known)             |
-| `confidence`  | number   | Confidence score 0-1           |
-| `learnedAt`   | string   | When AI learned this           |
-| `useAIData()` | function | Push AI data and skip scraping |
+| Property  | Type     | Description                       |
+| --------- | -------- | ---------------------------------- |
+| `known`   | boolean  | Whether the brain knows this URL   |
+| `data`    | object   | Brain data (if known)              |
+| `use()`   | function | Push brain data and skip scraping  |
 
 ## Using Dataset.pushData
 
@@ -189,21 +187,20 @@ For custom integrations without Crawlee:
 ```typescript
 import { FetchBrain } from "@fetchbrain.com/sdk";
 
-const ai = new FetchBrain({
+const brain = new FetchBrain({
   apiKey: "your-api-key",
-  intelligence: "high",
+  memory: "recent",
 });
 
-// Check if AI knows a URL
-const result = await ai.query({ url: "https://example.com/product/123" });
+// Check if the brain knows a URL
+const result = await brain.recall({ url: "https://example.com/product/123" });
 
 if (result.known) {
-  console.log("AI knows:", result.data);
-  console.log("Confidence:", result.confidence);
+  console.log("Brain knows:", result.data);
 } else {
   // Fetch and teach
   const data = await scrapeUrl("https://example.com/product/123");
-  await ai.learn({ url: "https://example.com/product/123", data });
+  await brain.learn({ url: "https://example.com/product/123", data });
 }
 ```
 
@@ -247,8 +244,12 @@ const mock = new MockFetchBrain({
 });
 
 // Use in tests
-const result = await mock.query("https://example.com/product");
+const result = await mock.recall({ url: "https://example.com/product" });
 expect(result.known).toBe(true);
+
+// Ask a natural-language question against seeded knowledge
+const answer = await mock.ask("what is the price?");
+console.log(answer.sources);
 ```
 
 ## Examples
@@ -256,7 +257,7 @@ expect(result.known).toBe(true);
 See the [examples](./examples) directory:
 
 - **basic-cheerio** - CheerioCrawler with FetchBrain
-- **manual-query** - Direct API usage without Crawlee
+- **manual-recall** - Direct API usage without Crawlee
 - **with-mock** - Unit testing with MockFetchBrain
 
 ## API Reference
@@ -265,7 +266,7 @@ See the [examples](./examples) directory:
 
 Wraps a Crawlee crawler with FetchBrain optimization.
 
-### `FetchBrain.query({ url, intelligence? })`
+### `FetchBrain.recall({ url, memory? })`
 
 Check if FetchBrain knows a URL.
 

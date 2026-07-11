@@ -20,7 +20,7 @@ import { deriveIdentity } from "../src/mock/derive-identity";
 // THE FIDELITY ORACLE: createFakeApi()
 //
 // A fetch-compatible function backed by an in-memory Map keyed by deriveIdentity.
-// It mirrors apps/api/src/routes/{query,learn}.ts validation order + status
+// It mirrors apps/api/src/routes/{recall,learn}.ts validation order + status
 // codes EXACTLY, and records every request for assertions.
 // =============================================================================
 
@@ -66,8 +66,8 @@ function createFakeApi(): FakeApi {
       return jsonResponse(
         {
           queries: 42,
-          recognized: 30,
-          recognitionRate: 0.714,
+          known: 30,
+          recallRate: 0.714,
           learned: 12,
           period: "day",
         },
@@ -86,8 +86,8 @@ function createFakeApi(): FakeApi {
 
     requests.push({ method, path, body });
 
-    // POST /v1/query  (mirrors apps/api/src/routes/query.ts)
-    if (path === "/v1/query" && method === "POST") {
+    // POST /v1/recall  (mirrors apps/api/src/routes/recall.ts)
+    if (path === "/v1/recall" && method === "POST") {
       if (!body.items || !Array.isArray(body.items)) {
         return jsonResponse({ error: "items must be an array" }, 400);
       }
@@ -114,7 +114,6 @@ function createFakeApi(): FakeApi {
       const known: Array<{
         ref: string;
         data: Record<string, unknown>;
-        confidence: number;
       }> = [];
       const unknown: string[] = [];
 
@@ -124,7 +123,6 @@ function createFakeApi(): FakeApi {
         if (stored) {
           known.push({
             ref: item.ref,
-            confidence: 0.95,
             data: stored.data,
           });
         } else {
@@ -203,7 +201,7 @@ function createFakeApi(): FakeApi {
     fetch: fetchImpl,
     store,
     requests,
-    queryCalls: () => requests.filter((r) => r.path === "/v1/query"),
+    queryCalls: () => requests.filter((r) => r.path === "/v1/recall"),
     learnCalls: () => requests.filter((r) => r.path === "/v1/learn"),
   };
 }
@@ -234,20 +232,20 @@ async function rawPost(
 // GROUP 1 — Oracle fidelity (prove the double enforces the real contract)
 // =============================================================================
 describe("Group 1 — oracle fidelity", () => {
-  it("query with old shape {items:[{key}]} (no request) -> 400", async () => {
+  it("recall with old shape {items:[{key}]} (no request) -> 400", async () => {
     const api = createFakeApi();
-    const { status, json } = await rawPost(api, "/v1/query", {
+    const { status, json } = await rawPost(api, "/v1/recall", {
       items: [{ key: "k1" }],
     });
     expect(status).toBe(400);
     expect(json.error).toMatch(/non-empty request\.url/);
   });
 
-  it("query with {items:[{ref,request:{}}]} (has request but no request.url) -> 400", async () => {
+  it("recall with {items:[{ref,request:{}}]} (has request but no request.url) -> 400", async () => {
     const api = createFakeApi();
-    const { status, json } = await rawPost(api, "/v1/query", {
+    const { status, json } = await rawPost(api, "/v1/recall", {
       items: [{ ref: "r", request: {} }],
-      intelligence: "high",
+      memory: "recent",
     });
     expect(status).toBe(400);
     expect(json.error).toMatch(/non-empty request\.url/);
@@ -291,11 +289,11 @@ describe("Group 2 — full-stack request/response conformance", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("query on empty store resolves {known:false} and sends exact items body (no urls)", async () => {
+  it("recall on empty store resolves {known:false} and sends exact items body (no urls)", async () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    const result = await c.query({ url: "https://x/1" });
+    const result = await c.recall({ url: "https://x/1" });
     expect(result.known).toBe(false);
 
     const body = api.queryCalls()[0].body as any;
@@ -317,16 +315,16 @@ describe("Group 2 — full-stack request/response conformance", () => {
     expect(res).toMatchObject({ learned: 1, status: "success" });
   });
 
-  it("query after learn resolves {known:true, data, confidence} (response parsing maps known[].data/confidence)", async () => {
+  it("recall after learn resolves {known:true, data} with no confidence (response parsing maps known[].data)", async () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
     await c.learn({ url: "https://x/1" }, { title: "A" });
 
-    const result = await c.query({ url: "https://x/1" });
+    const result = await c.recall({ url: "https://x/1" });
     expect(result.known).toBe(true);
     expect(result.data).toEqual({ title: "A" });
-    expect(typeof result.confidence).toBe("number");
+    expect((result as any).confidence).toBeUndefined();
   });
 });
 
@@ -353,13 +351,13 @@ describe("Group 3 — identity at scale", () => {
       await c.learn({ url: sharedUrl, method: "POST", uniqueKey: `key_${i}` }, { n: i });
     }
 
-    // Query all 50 in bulk.
+    // Recall all 50 in bulk.
     const requests = Array.from({ length: N }, (_, i) => ({
       url: sharedUrl,
       method: "POST" as const,
       uniqueKey: `key_${i}`,
     }));
-    const results = await c.queryBulk(requests);
+    const results = await c.recallBulk(requests);
 
     for (let i = 0; i < N; i++) {
       const r = results[i];
@@ -374,7 +372,7 @@ describe("Group 3 — identity at scale", () => {
     );
     await c.learn({ url: "https://api/graphql", method: "POST", uniqueKey: "op:A" }, { hit: "A" });
 
-    const result = await c.query({ url: "https://api/graphql", method: "POST", uniqueKey: "op:B" });
+    const result = await c.recall({ url: "https://api/graphql", method: "POST", uniqueKey: "op:B" });
     expect(result.known).toBe(false);
     expect(result.data).toBeUndefined();
   });
@@ -403,9 +401,9 @@ describe("Group 4 — concurrency / batching correctness", () => {
     }
     const learnPostsBefore = api.learnCalls().length;
 
-    // Fire 100 concurrent queries.
+    // Fire 100 concurrent recalls.
     const promises = Array.from({ length: N }, (_, i) =>
-      c.query({ url: `https://x/${i}` }).then((r) => ({ i, r })),
+      c.recall({ url: `https://x/${i}` }).then((r) => ({ i, r })),
     );
     const settled = await Promise.all(promises);
 
@@ -418,7 +416,7 @@ describe("Group 4 — concurrency / batching correctness", () => {
       }
     }
 
-    // Coalescing: fewer POST /v1/query calls than queries.
+    // Coalescing: fewer POST /v1/recall calls than queries.
     const queryPosts = api.queryCalls().length;
     expect(queryPosts).toBeLessThan(N);
     // Sanity: we did fire learn posts separately; not counted as query posts.
@@ -464,7 +462,7 @@ describe("Group 5 — graceful degradation", () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    const result = await c.query({ url: "https://x/1" });
+    const result = await c.recall({ url: "https://x/1" });
     expect(result).toEqual({ known: false, fallback: true });
   });
 
@@ -477,7 +475,7 @@ describe("Group 5 — graceful degradation", () => {
     const c = new FetchBrainClient(
       baseConfig({ batch: { maxSize: 1, maxWait: 0 } }),
     );
-    const result = await c.query({ url: "https://x/1" });
+    const result = await c.recall({ url: "https://x/1" });
     expect(result).toEqual({ known: false, fallback: true });
   });
 
@@ -501,20 +499,20 @@ describe("Group 5 — graceful degradation", () => {
     );
 
     // Drive 2 failures to open the breaker.
-    await c.query({ url: "https://x/1" });
-    await c.query({ url: "https://x/2" });
+    await c.recall({ url: "https://x/1" });
+    await c.recall({ url: "https://x/2" });
     expect(c.getCircuitState().state).toBe("open");
 
     // Subsequent query short-circuits WITHOUT calling fetch.
     const callsAfterOpen = fetchMock.mock.calls.length;
-    const fallback = await c.query({ url: "https://x/3" });
+    const fallback = await c.recall({ url: "https://x/3" });
     expect(fallback).toEqual({ known: false, fallback: true });
     expect(fetchMock.mock.calls.length).toBe(callsAfterOpen);
 
     // Recover: let reset timeout pass, switch the API to ok, query serves again.
     mode = "ok";
     await new Promise((r) => setTimeout(r, 70));
-    const recovered = await c.query({ url: "https://x/4" });
+    const recovered = await c.recall({ url: "https://x/4" });
     expect(recovered.known).toBe(false); // url is unknown in this mock
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsAfterOpen);
     expect(c.getCircuitState().state).toBe("closed");

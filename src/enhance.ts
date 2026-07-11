@@ -16,11 +16,11 @@ interface RequestContext {
   request: RawRequest;
   client: FetchBrainClient;
   learning: boolean;
-  aiKnown: boolean; // Whether AI already knows this URL
+  aiKnown: boolean; // Whether the brain already knows this URL
 }
 
 const STRIP_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
-const SDK_USERDATA_KEYS = new Set(["fetchBrainKnown", "fetchBrainData", "__fetchBrainResult"]);
+const SDK_USERDATA_KEYS = new Set(["fetchBrainRecalled", "fetchBrainData", "__fetchBrainResult"]);
 
 /**
  * Snapshot the raw request the SDK forwards (credentials + SDK userData removed).
@@ -58,7 +58,7 @@ function warnDefaultUniqueKey(request: { url: string; method?: string; uniqueKey
   const isDefault = !request.uniqueKey || request.uniqueKey === request.url;
   if (method !== "GET" && isDefault && !warned.has(request.url)) {
     warned.add(request.url);
-    logger.warn(`FetchBrain: ${method} ${request.url} has a default uniqueKey — set request.uniqueKey to your stable identity, or these requests won't be cached separately.`);
+    logger.warn(`FetchBrain: ${method} ${request.url} has a default uniqueKey — set request.uniqueKey to your stable identity, or these requests won't get their own memory.`);
   }
 }
 
@@ -79,17 +79,15 @@ export function getCurrentContext(): RequestContext | undefined {
 type CrawlerLike = any;
 
 /**
- * AI context available in request handler
+ * Brain context available in request handler
  */
 export interface FetchBrainContext {
-  /** Whether AI knows this URL */
+  /** Whether the brain knows this URL */
   known: boolean;
-  /** AI data if known */
+  /** Brain data if known */
   data?: Record<string, unknown>;
-  /** Confidence score (0-1) */
-  confidence?: number;
-  /** Use AI data and skip scraping (call in handler to early return) */
-  useAIData: () => Promise<void>;
+  /** Use brain data and skip scraping (call in handler to early return) */
+  use: () => Promise<void>;
 }
 
 /**
@@ -106,8 +104,8 @@ interface RequestHandlerContext {
     debug: (message: string) => void;
   };
   pushData?: (data: Record<string, unknown>) => Promise<void>;
-  /** FetchBrain AI context - check if AI knows this URL */
-  ai?: FetchBrainContext;
+  /** FetchBrain context - check if the brain knows this URL */
+  brain?: FetchBrainContext;
   [key: string]: unknown;
 }
 
@@ -151,14 +149,13 @@ export class FetchBrain {
   }
 
   /**
-   * Query if FetchBrain "knows" a URL
+   * Recall whether FetchBrain "knows" a URL
    */
-  async query(options: { url: string; intelligence?: string }) {
-    const result = await this.client.query({ url: options.url });
+  async recall(options: { url: string; memory?: string }) {
+    const result = await this.client.recall({ url: options.url });
     return {
       known: result.known,
       data: result.data,
-      confidence: result.confidence,
     };
   }
 
@@ -180,8 +177,8 @@ export class FetchBrain {
    * Enhance a Crawlee crawler with FetchBrain optimization
    *
    * This wraps the crawler's request handler to:
-   * 1. Query AI before making requests (AI knows = skip request)
-   * 2. Teach AI after successful requests (learning)
+   * 1. Recall the brain before making requests (brain knows = skip request)
+   * 2. Teach the brain after successful requests (learning)
    *
    * @param crawler - Any Crawlee crawler (CheerioCrawler, PlaywrightCrawler, etc.)
    * @param config - FetchBrain configuration
@@ -209,8 +206,8 @@ export class FetchBrain {
     // Run stats tracking
     const runStats = {
       totalRequests: 0,
-      aiKnown: 0,
-      aiSkipped: 0, // AI knew + skipped scraping
+      recalled: 0,
+      aiSkipped: 0, // brain knew + skipped scraping
       learned: 0,
       scraped: 0, // Actually ran handler
       startTime: 0,
@@ -257,26 +254,21 @@ export class FetchBrain {
 
       try {
         // 1. Check if FetchBrain "knows" this URL
-        const aiResult = await client.query(rawRequest);
+        const aiResult = await client.recall(rawRequest);
 
-        // Track if AI data was used (to skip learning)
+        // Track if brain data was used (to skip learning)
         let usedAIData = false;
         const originalPushData = context.pushData;
 
-        // 2. Add AI context to handler - developers can check and decide
-        context.ai = {
+        // 2. Add brain context to handler - developers can check and decide
+        context.brain = {
           known: aiResult.known,
           data: aiResult.data,
-          confidence: aiResult.confidence,
-          useAIData: async () => {
+          use: async () => {
             if (aiResult.known && aiResult.data && originalPushData) {
               usedAIData = true;
               await originalPushData.call(context, aiResult.data);
-              logger.info(
-                `Used AI data: ${url} (confidence: ${
-                  aiResult.confidence?.toFixed(2) || "N/A"
-                })`,
-              );
+              logger.info(`Used brain data: ${url}`);
             }
           },
         };
@@ -284,7 +276,7 @@ export class FetchBrain {
         // Save in userData for reference
         request.userData = {
           ...request.userData,
-          fetchBrainKnown: aiResult.known,
+          fetchBrainRecalled: aiResult.known,
           fetchBrainData: aiResult.data,
         };
 
@@ -292,29 +284,25 @@ export class FetchBrain {
         const handlerLabel = request.label;
         const runHandler = shouldRunHandler(config.alwaysRun, handlerLabel);
 
-        // 4. Auto-optimization: if AI knows and handler should not run, skip
+        // 4. Auto-optimization: if brain knows and handler should not run, skip
         if (aiResult.known && aiResult.data && !runHandler) {
-          runStats.aiKnown++;
+          runStats.recalled++;
           runStats.aiSkipped++;
-          logger.info(
-            `AI known: ${url} [${handlerLabel || "default"}] (confidence: ${
-              aiResult.confidence?.toFixed(2) || "N/A"
-            })`,
-          );
+          logger.info(`Recalled: ${url} [${handlerLabel || "default"}]`);
           if (originalPushData) {
             await originalPushData.call(context, aiResult.data);
           }
           return;
         }
 
-        // 5. Run handler (either AI doesn't know, or alwaysRun matches this label)
+        // 5. Run handler (either brain doesn't know, or alwaysRun matches this label)
         runStats.scraped++;
         if (aiResult.known) {
-          runStats.aiKnown++;
+          runStats.recalled++;
           logger.info(
             `Running handler [${
               handlerLabel || "default"
-            }] with AI data available: ${url}`,
+            }] with recalled data available: ${url}`,
           );
         } else {
           logger.debug(`Learning: ${url}`);
@@ -324,8 +312,8 @@ export class FetchBrain {
         if (originalPushData && config.learning !== false) {
           context.pushData = async (data: Record<string, unknown>) => {
             // Skip learning if:
-            // 1. Developer already used AI data via useAIData()
-            // 2. AI already knows this URL (no need to re-learn)
+            // 1. Developer already used brain data via use()
+            // 2. Brain already knows this URL (no need to re-learn)
             const shouldLearn = !usedAIData && !aiResult.known;
 
             if (shouldLearn) {
@@ -476,7 +464,7 @@ export class FetchBrain {
               : "0";
 
           logger.info(
-            `Finished! AI known: ${runStats.aiKnown}/${runStats.totalRequests} (${savingsPercent}%), ` +
+            `🧠 Finished! recalled: ${runStats.recalled}/${runStats.totalRequests} (${savingsPercent}%), ` +
               `learned: ${runStats.learned}, scraped: ${runStats.scraped}, duration: ${duration}s`,
           );
         }

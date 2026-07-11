@@ -10,26 +10,30 @@
 import express from "express";
 import { deriveIdentity } from "./derive-identity";
 import type {
-  QueryRequest,
-  QueryResponse,
+  RecallRequest,
+  RecallResponse,
   LearnRequest,
   LearnResponse,
   StatsResponse,
+  AskResponse,
+  MemoryDepth,
 } from "../types";
 
 const app = express();
 app.use(express.json());
 
-// AI knowledge base
+const ALL_MEMORY_DEPTHS: MemoryDepth[] = ["fresh", "recent", "standard", "deep"];
+
+// Remembered data (the brain's memory)
 const knowledge = new Map<
   string,
-  { data: Record<string, unknown>; learnedAt: string }
+  { url: string; data: Record<string, unknown>; learnedAt: string }
 >();
 
 // Stats tracking
 const stats = {
   queries: 0,
-  recognized: 0,
+  known: 0,
   learned: 0,
 };
 
@@ -54,36 +58,89 @@ app.use((req, res, next) => {
 });
 
 /**
- * POST /v1/query - Check if AI knows the items
+ * POST /v1/recall - Check if the brain knows the items
+ * (POST /v1/query is kept as an alias, mirroring the real API's alias window)
  */
-app.post("/v1/query", (req, res) => {
-  const body = req.body as QueryRequest;
+const handleRecall: express.RequestHandler = (req, res) => {
+  const body = req.body as RecallRequest;
   const items = body.items;
 
   if (!items || !Array.isArray(items)) {
     return res.status(400).json({ error: "items array is required" });
   }
 
+  if (body.memory !== undefined && !ALL_MEMORY_DEPTHS.includes(body.memory)) {
+    return res.status(400).json({ error: `Invalid memory depth: ${body.memory}` });
+  }
+
   stats.queries += items.length;
 
-  const known: QueryResponse["known"] = [];
+  const known: RecallResponse["known"] = [];
   const unknown: string[] = [];
 
   for (const item of items) {
     const k = knowledge.get(deriveIdentity(item.request));
     if (k) {
-      stats.recognized++;
-      known.push({ ref: item.ref, data: k.data, confidence: 0.97 });
+      stats.known++;
+      known.push({ ref: item.ref, data: k.data });
     } else {
       unknown.push(item.ref);
     }
   }
 
   console.log(
-    `[Query] ${items.length} items → ${known.length} recognized, ${unknown.length} new`
+    `[Recall] ${items.length} items → ${known.length} known, ${unknown.length} new`
   );
 
-  res.json({ known, unknown } satisfies QueryResponse);
+  res.json({ known, unknown } satisfies RecallResponse);
+};
+
+app.post("/v1/recall", handleRecall);
+app.post("/v1/query", handleRecall); // deprecated alias
+
+/**
+ * POST /v1/ask - Naive natural-language ask against learned knowledge.
+ * Substring-matches the query's words against stored data. When `answer`
+ * is truthy, also returns a canned `answer` string built from the top
+ * source — it is NOT a real synthesized answer, just enough of the shape
+ * for callers to test against.
+ */
+app.post("/v1/ask", (req, res) => {
+  const body = req.body as { query?: unknown; limit?: unknown; answer?: unknown };
+  const query = body.query;
+
+  if (typeof query !== "string" || query.trim() === "") {
+    return res.status(400).json({ error: "query string is required" });
+  }
+
+  const limit =
+    typeof body.limit === "number" ? body.limit : undefined;
+  const cap = Math.min(Math.max(1, limit ?? 10), 20);
+
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const sources = [...knowledge.values()]
+    .map((entry) => {
+      const haystack = JSON.stringify(entry.data).toLowerCase();
+      const score =
+        words.filter((w) => haystack.includes(w)).length /
+        Math.max(words.length, 1);
+      return { score, url: entry.url, data: entry.data };
+    })
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, cap);
+
+  console.log(`[Ask] query matched ${sources.length} sources`);
+
+  const response: AskResponse = { sources, status: "ok" };
+  if (body.answer) {
+    response.answer =
+      sources.length > 0
+        ? `Based on ${sources.length} remembered page${sources.length === 1 ? "" : "s"}: ${JSON.stringify(sources[0].data)}`
+        : "Nothing remembered yet for that question.";
+  }
+
+  res.json(response);
 });
 
 /**
@@ -102,6 +159,7 @@ app.post("/v1/learn", (req, res) => {
   for (const entry of entries) {
     if (entry.request?.url && entry.data) {
       knowledge.set(deriveIdentity(entry.request), {
+        url: entry.request.url,
         data: entry.data,
         learnedAt: new Date().toISOString(),
       });
@@ -110,9 +168,9 @@ app.post("/v1/learn", (req, res) => {
     }
   }
 
-  res.json({ learned, status: "success" } satisfies LearnResponse);
+  res.status(201).json({ learned, status: "success" } satisfies LearnResponse);
 
-  console.log(`[Learn] AI learned ${learned} entries`);
+  console.log(`[Learn] brain learned ${learned} entries`);
 });
 
 /**
@@ -121,8 +179,8 @@ app.post("/v1/learn", (req, res) => {
 app.get("/v1/stats", (req, res) => {
   const response: StatsResponse = {
     queries: stats.queries,
-    recognized: stats.recognized,
-    recognitionRate: stats.queries > 0 ? stats.recognized / stats.queries : 0,
+    known: stats.known,
+    recallRate: stats.queries > 0 ? stats.known / stats.queries : 0,
     learned: stats.learned,
     period: new Date().toISOString().slice(0, 7), // YYYY-MM
   };
@@ -147,10 +205,10 @@ app.get("/health", (req, res) => {
 app.post("/reset", (req, res) => {
   knowledge.clear();
   stats.queries = 0;
-  stats.recognized = 0;
+  stats.known = 0;
   stats.learned = 0;
 
-  console.log("[Reset] AI knowledge and stats cleared");
+  console.log("[Reset] memory and stats cleared");
 
   res.json({ status: "reset" });
 });
@@ -167,11 +225,13 @@ app.listen(PORT, () => {
 ║   Running at: http://localhost:${PORT}                          ║
 ║                                                               ║
 ║   Endpoints:                                                  ║
-║     POST /v1/query  - Ask AI (query)                          ║
-║     POST /v1/learn  - Teach AI (learn)                        ║
+║     POST /v1/recall - Recall from the brain                   ║
+║     POST /v1/query  - Deprecated alias for /v1/recall         ║
+║     POST /v1/ask    - Ask the brain a question                ║
+║     POST /v1/learn  - Teach the brain (learn)                 ║
 ║     GET  /v1/stats  - Usage statistics                        ║
 ║     GET  /health    - Health check                            ║
-║     POST /reset     - Reset AI (testing)                      ║
+║     POST /reset     - Reset the brain (testing)               ║
 ║                                                               ║
 ║   Auth: Use API key starting with 'test_' or 'fb_'            ║
 ║                                                               ║

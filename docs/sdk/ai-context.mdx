@@ -1,32 +1,32 @@
 ---
-title: AI Context
-description: "Access AI data directly in your request handler"
+title: Brain Context
+description: "Access brain data directly in your request handler"
 ---
 
 ## Overview
 
-When using `FetchBrain.enhance()`, your request handler receives an `ai` property in the context with information about what the AI knows.
+When using `FetchBrain.enhance()`, your request handler receives a `brain` property in the context with information about what the brain knows.
 
 ## Usage
 
 ```typescript
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
-    requestHandler: async ({ $, request, ai, pushData }) => {
-      // Check if AI already knows this page
-      if (ai?.known && ai.confidence! > 0.9) {
-        console.log("AI knows this page with high confidence");
+    requestHandler: async ({ $, request, brain, pushData }) => {
+      // Check if the brain already knows this page
+      if (brain?.known) {
+        console.log("Brain knows this page");
 
-        // Option 1: Use AI data directly (skip scraping)
-        await ai.useAIData();
+        // Option 1: Use brain data directly (skip scraping)
+        await brain.use();
         return;
 
-        // Option 2: Compare AI data with scraped data
+        // Option 2: Compare brain data with scraped data
         // const scraped = { title: $('h1').text() };
-        // console.log('AI:', ai.data, 'Scraped:', scraped);
+        // console.log('Brain:', brain.data, 'Scraped:', scraped);
       }
 
-      // Scrape normally if AI doesn't know
+      // Scrape normally if the brain doesn't know
       const data = { title: $("h1").text() };
       await pushData(data);
     },
@@ -36,61 +36,65 @@ const crawler = FetchBrain.enhance(
 ```
 
 <Note>
-  By default, when the AI knows a page the handler is skipped entirely — so the
-  only time your handler runs and can read `ai.known === true` is when you opt in
-  with `alwaysRun` (either `true`, or a label list that matches this request).
-  Without `alwaysRun`, the handler only runs for pages the AI does **not** know.
+  By default, when the brain knows a page the handler is skipped entirely — so
+  the only time your handler runs and can read `brain.known === true` is when
+  you opt in with `alwaysRun` (either `true`, or a label list that matches this
+  request). Without `alwaysRun`, the handler only runs for pages the brain does
+  **not** know.
 </Note>
 
-## AI Context Properties
+## Brain Context Properties
 
 <ParamField body="known" type="boolean">
-  Whether the AI knows this URL
+  Whether the brain knows this URL
 </ParamField>
 
 <ParamField body="data" type="object">
-  The AI's known data (if recognized)
+  The brain's known data (if known)
 </ParamField>
 
-<ParamField body="confidence" type="number">
-  Confidence score from 0 to 1 (present when known)
-</ParamField>
-
-<ParamField body="useAIData" type="() => Promise<void>">
-  Helper function to push AI data and skip scraping
+<ParamField body="use" type="() => Promise<void>">
+  Helper function to push brain data and skip scraping
 </ParamField>
 
 ## Use Cases
 
-### Skip scraping when AI knows
+### Skip scraping when the brain knows
 
 ```typescript
-if (ai?.known) {
-  await ai.useAIData();
+if (brain?.known) {
+  await brain.use();
   return;
 }
 ```
 
-### Verify AI data
+### Verify brain data
 
 ```typescript
-if (ai?.known) {
+if (brain?.known) {
   const scraped = { title: $("h1").text() };
-  if (scraped.title !== ai.data.title) {
-    console.log("Data changed! Updating AI...");
+  if (scraped.title !== brain.data.title) {
+    console.log("Data changed! Teaching the brain...");
     await pushData(scraped);
   }
 }
 ```
 
-### Conditional scraping based on confidence
+### Conditional scraping based on memory depth
 
 ```typescript
-if (ai?.known && ai.confidence! > 0.95) {
-  // Very high confidence, trust AI
-  await ai.useAIData();
+// Use a narrower memory window for time-sensitive pages
+const crawler = FetchBrain.enhance(crawler, {
+  memory: "fresh",
+});
+```
+
+```typescript
+if (brain?.known) {
+  // Brain knows within the configured memory window, trust it
+  await brain.use();
 } else {
-  // Lower confidence or unknown, scrape fresh
+  // Unknown, scrape fresh
   await pushData({ title: $("h1").text() });
 }
 ```

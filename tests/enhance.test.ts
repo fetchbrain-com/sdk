@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FetchBrain, pushData, getCurrentContext } from "../src/enhance";
-import type { FetchBrainConfig, AIResult, LearnResponse } from "../src/types";
+import type { FetchBrainConfig, RecallResult, LearnResponse } from "../src/types";
 
 // Mock the client module
 vi.mock("../src/client", () => {
@@ -11,7 +11,7 @@ vi.mock("../src/client", () => {
 
   return {
     FetchBrainClient: vi.fn().mockImplementation(() => ({
-      query: mockQuery,
+      recall: mockQuery,
       learn: mockLearn,
       stats: mockStats,
       sendTelemetry: mockSendTelemetry,
@@ -58,28 +58,27 @@ describe("FetchBrain", () => {
     });
   });
 
-  describe("query", () => {
-    it("should query AI for URL knowledge", async () => {
-      const mockResult: AIResult = {
+  describe("recall", () => {
+    it("should recall AI knowledge for a URL", async () => {
+      const mockResult: RecallResult = {
         known: true,
         data: { title: "Test" },
-        confidence: 0.95,
       };
       (__mockQuery as any).mockResolvedValueOnce(mockResult);
 
       const fb = new FetchBrain(testConfig);
-      const result = await fb.query({ url: "https://example.com/test" });
+      const result = await fb.recall({ url: "https://example.com/test" });
 
       expect(result.known).toBe(true);
       expect(result.data).toEqual({ title: "Test" });
-      expect(result.confidence).toBe(0.95);
+      expect(result).not.toHaveProperty("confidence");
     });
 
     it("should return unknown for new URLs", async () => {
       (__mockQuery as any).mockResolvedValueOnce({ known: false });
 
       const fb = new FetchBrain(testConfig);
-      const result = await fb.query({ url: "https://example.com/new" });
+      const result = await fb.recall({ url: "https://example.com/new" });
 
       expect(result.known).toBe(false);
       expect(result.data).toBeUndefined();
@@ -106,8 +105,8 @@ describe("FetchBrain", () => {
     it("should return usage statistics", async () => {
       (__mockStats as any).mockResolvedValueOnce({
         queries: 100,
-        recognized: 80,
-        recognitionRate: 0.8,
+        known: 80,
+        recallRate: 0.8,
         learned: 20,
         period: "day",
       });
@@ -116,7 +115,7 @@ describe("FetchBrain", () => {
       const stats = await fb.stats();
 
       expect(stats?.queries).toBe(100);
-      expect(stats?.recognitionRate).toBe(0.8);
+      expect(stats?.recallRate).toBe(0.8);
     });
   });
 });
@@ -352,12 +351,11 @@ describe("FetchBrain.enhance", () => {
     });
   });
 
-  describe("context.ai", () => {
-    it("should provide AI context in handler", async () => {
+  describe("context.brain", () => {
+    it("should provide brain context in handler", async () => {
       (__mockQuery as any).mockResolvedValue({
         known: true,
         data: { title: "AI Data" },
-        confidence: 0.92,
       });
 
       let capturedContext: any;
@@ -382,23 +380,24 @@ describe("FetchBrain.enhance", () => {
 
       await enhanced.requestHandler(context);
 
-      expect(capturedContext.ai).toBeDefined();
-      expect(capturedContext.ai.known).toBe(true);
-      expect(capturedContext.ai.data).toEqual({ title: "AI Data" });
-      expect(capturedContext.ai.confidence).toBe(0.92);
-      expect(typeof capturedContext.ai.useAIData).toBe("function");
+      const handlerContext = capturedContext;
+      expect(handlerContext.brain).toBeDefined();
+      expect(handlerContext.brain.known).toBe(true);
+      expect(handlerContext.brain).not.toHaveProperty("confidence");
+      expect(handlerContext.brain.data).toEqual({ title: "AI Data" });
+      await handlerContext.brain.use();
+      expect(handlerContext.ai).toBeUndefined(); // old surface fully gone
     });
 
-    it("should allow useAIData() to push AI data", async () => {
+    it("should allow use() to push brain data", async () => {
       (__mockQuery as any).mockResolvedValue({
         known: true,
         data: { title: "AI Data" },
-        confidence: 0.92,
       });
 
       const pushData = vi.fn();
       const handlerFn = vi.fn(async (ctx) => {
-        await ctx.ai.useAIData();
+        await ctx.brain.use();
       });
 
       const crawler = {
@@ -545,7 +544,7 @@ describe("FetchBrain.enhance", () => {
       const enhanced = FetchBrain.enhance(crawler, testConfig);
       await enhanced.requestHandler({
         request: { url: "https://api/gql", method: "POST", uniqueKey: "op:1", payload: '{"q":1}',
-          headers: { "Authorization": "Bearer secret", "X-Lang": "en" }, userData: { page: 2, fetchBrainKnown: true } },
+          headers: { "Authorization": "Bearer secret", "X-Lang": "en" }, userData: { page: 2, fetchBrainRecalled: true } },
         pushData: vi.fn(),
       });
       const sent = (__mockQuery as any).mock.calls[0][0]; // first arg = RawRequest

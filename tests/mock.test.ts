@@ -8,40 +8,40 @@ describe('MockFetchBrain', () => {
     mock = new MockFetchBrain();
   });
 
-  describe('query', () => {
-    it('should return unknown for URLs AI does not know', async () => {
-      const result = await mock.query({ url: 'https://example.com/unknown' });
+  describe('recall', () => {
+    it('should return unknown for URLs the brain does not know', async () => {
+      const result = await mock.recall({ url: 'https://example.com/unknown' });
 
       expect(result.known).toBe(false);
       expect(result.data).toBeUndefined();
     });
 
-    it('should return data for keys AI knows', async () => {
+    it('should return data for keys the brain knows, with no confidence field', async () => {
       // First learn the data
       await mock.learn({ url: 'https://example.com/product' }, { title: 'Test Product', price: 9.99 });
 
-      // Then query by request
-      const result = await mock.query({ url: 'https://example.com/product' });
+      // Then recall by request
+      const result = await mock.recall({ url: 'https://example.com/product' });
 
       expect(result.known).toBe(true);
       expect(result.data).toEqual({ title: 'Test Product', price: 9.99 });
-      expect(result.confidence).toBe(0.97);
+      expect(result).not.toHaveProperty('confidence');
     });
 
     it("keys by (url, method, uniqueKey) — same url, distinct uniqueKey are distinct", async () => {
       const mock = new MockFetchBrain();
       await mock.learn({ url: "https://gql", method: "POST", uniqueKey: "op:A" }, { which: "A" });
       await mock.learn({ url: "https://gql", method: "POST", uniqueKey: "op:B" }, { which: "B" });
-      expect((await mock.query({ url: "https://gql", method: "POST", uniqueKey: "op:A" })).data).toEqual({ which: "A" });
-      expect((await mock.query({ url: "https://gql", method: "POST", uniqueKey: "op:B" })).data).toEqual({ which: "B" });
+      expect((await mock.recall({ url: "https://gql", method: "POST", uniqueKey: "op:A" })).data).toEqual({ which: "A" });
+      expect((await mock.recall({ url: "https://gql", method: "POST", uniqueKey: "op:B" })).data).toEqual({ which: "B" });
     });
   });
 
-  describe('queryBulk', () => {
-    it('should query multiple items at once', async () => {
+  describe('recallBulk', () => {
+    it('should recall multiple items at once', async () => {
       await mock.learn({ url: 'https://example.com/1' }, { id: 1 });
 
-      const results = await mock.queryBulk([
+      const results = await mock.recallBulk([
         { url: 'https://example.com/1' },
         { url: 'https://example.com/2' },
       ]);
@@ -63,16 +63,16 @@ describe('MockFetchBrain', () => {
 
   describe('stats', () => {
     it('should track usage statistics', async () => {
-      await mock.query({ url: 'https://example.com/1' });
+      await mock.recall({ url: 'https://example.com/1' });
       await mock.learn({ url: 'https://example.com/1' }, { data: 'test' });
-      await mock.query({ url: 'https://example.com/1' });
+      await mock.recall({ url: 'https://example.com/1' });
 
       const stats = await mock.stats();
 
       expect(stats.queries).toBe(2);
-      expect(stats.recognized).toBe(1); // Second query is recognized
+      expect(stats.known).toBe(1); // Second recall is known
       expect(stats.learned).toBe(1);
-      expect(stats.recognitionRate).toBe(0.5);
+      expect(stats.recallRate).toBe(0.5);
     });
   });
 
@@ -89,10 +89,61 @@ describe('MockFetchBrain', () => {
     });
   });
 
+  describe('ask', () => {
+    it('mock ask answers from seeded memory with sources', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1", { title: "Blue Widget", price: 49 });
+      const res = await brain.ask("blue widget");
+      expect(res.status).toBe("ok");
+      expect(res.sources.length).toBeGreaterThan(0);
+      expect(res.sources[0].data).toMatchObject({ title: "Blue Widget" });
+    });
+
+    it('caps returned sources at the requested limit (default 10 / max 20)', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed([
+        { url: "https://x.com/p1", data: { title: "Blue Widget" } },
+        { url: "https://x.com/p2", data: { title: "Blue Widget XL" } },
+        { url: "https://x.com/p3", data: { title: "Blue Widget Mini" } },
+      ]);
+      const res = await brain.ask("blue widget", { limit: 2 });
+      expect(res.sources.length).toBe(2);
+    });
+
+    it('floors the limit at 1 (rejects 0 / negative limits)', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1", { title: "Blue Widget" });
+      const res = await brain.ask("blue widget", { limit: 0 });
+      expect(res.sources.length).toBe(1);
+    });
+
+    it('sources carry the real learned/seeded URL, not the internal identity string', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1?b=2&a=1", { title: "Blue Widget" });
+      const res = await brain.ask("blue widget");
+      expect(res.sources[0].url).toBe("https://x.com/p1?b=2&a=1");
+    });
+
+    it('returns a canned answer string when opts.answer is truthy', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1", { title: "Blue Widget" });
+      const res = await brain.ask("blue widget", { answer: true });
+      expect(typeof res.answer).toBe("string");
+      expect(res.answer).toContain("Blue Widget");
+    });
+
+    it('omits answer when opts.answer is falsy', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1", { title: "Blue Widget" });
+      const res = await brain.ask("blue widget");
+      expect(res.answer).toBeUndefined();
+    });
+  });
+
   describe('clear', () => {
     it('should clear knowledge and stats', async () => {
       await mock.learn({ url: 'https://example.com/1' }, { data: 'test' });
-      await mock.query({ url: 'https://example.com/1' });
+      await mock.recall({ url: 'https://example.com/1' });
 
       mock.clear();
 
@@ -109,7 +160,7 @@ describe('MockFetchBrain', () => {
       ]);
 
       const mockWithKnowledge = new MockFetchBrain({ initialKnowledge });
-      const result = await mockWithKnowledge.query({ url: 'https://example.com/preset' });
+      const result = await mockWithKnowledge.recall({ url: 'https://example.com/preset' });
 
       expect(result.known).toBe(true);
       expect(result.data).toEqual({ preset: true });
@@ -123,7 +174,7 @@ describe('MockFetchBrain', () => {
         failureRate: 1, // 100% failure rate
       });
 
-      await expect(failingMock.query({ url: 'https://example.com/any' }))
+      await expect(failingMock.recall({ url: 'https://example.com/any' }))
         .rejects.toThrow('Simulated API failure');
     });
   });
@@ -133,7 +184,7 @@ describe('MockFetchBrain', () => {
       const slowMock = new MockFetchBrain({ latency: 100 });
 
       const start = Date.now();
-      await slowMock.query({ url: 'https://example.com/slow' });
+      await slowMock.recall({ url: 'https://example.com/slow' });
       const duration = Date.now() - start;
 
       expect(duration).toBeGreaterThanOrEqual(90); // Allow some variance
@@ -147,17 +198,17 @@ describe('createMockConfig', () => {
 
     expect(config.apiKey).toBe('test_mock_key');
     expect(config.baseUrl).toBe('http://localhost:3456');
-    expect(config.intelligence).toBe('high');
+    expect(config.memory).toBe('recent');
     expect(config.learning).toBe(true);
   });
 
   it('should allow overrides', () => {
     const config = createMockConfig({
       apiKey: 'custom_key',
-      intelligence: 'realtime',
+      memory: 'fresh',
     });
 
     expect(config.apiKey).toBe('custom_key');
-    expect(config.intelligence).toBe('realtime');
+    expect(config.memory).toBe('fresh');
   });
 });

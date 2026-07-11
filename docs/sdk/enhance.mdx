@@ -36,7 +36,7 @@ interface FetchBrainConfig {
 
   // Optional
   baseUrl?: string; // API URL (default: production)
-  intelligence?: IntelligenceLevel; // AI accuracy level (default: "high")
+  memory?: MemoryDepth; // How far back the brain recalls (default: "recent")
   learning?: boolean; // Enable AI learning (default: true)
   alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
   refreshOnRebuild?: boolean; // Only reuse data from the same build (default: false)
@@ -58,7 +58,7 @@ interface FetchBrainConfig {
   FetchBrain derives each request's identity **server-side** from
   `(method, normalized url, uniqueKey)` — the body is never part of the key. For
   Crawlee requests that share a URL and method (POST or GraphQL endpoints), set a
-  distinct `request.uniqueKey` so each is recognized separately. The SDK warns
+  distinct `request.uniqueKey` so each is remembered separately. The SDK warns
   once per URL when a non-GET request has a default `uniqueKey`. Credentials are
   protected: the SDK strips `Authorization` and `Cookie` headers before sending.
 </Note>
@@ -69,8 +69,8 @@ interface FetchBrainConfig {
   Your FetchBrain API key from the dashboard
 </ParamField>
 
-<ParamField body="intelligence" type="string" default="high">
-  AI accuracy level: `realtime`, `high`, `standard`, or `deep`
+<ParamField body="memory" type="string" default="recent">
+  How far back the brain recalls: `fresh` (1h), `recent` (24h), `standard` (7d), or `deep` (30d)
 </ParamField>
 
 <ParamField body="learning" type="boolean" default="true">
@@ -82,9 +82,9 @@ interface FetchBrainConfig {
 </ParamField>
 
 <ParamField body="refreshOnRebuild" type="boolean" default="false">
-  Only reuse knowledge learned by the current build (uses
-  `APIFY_ACTOR_BUILD_ID`). When a scraper is rebuilt, it re-scrapes instead of
-  returning stale data.
+  Only reuse knowledge learned by the current build (auto-detected from the
+  platform's native build identifier). When a scraper is rebuilt, it re-scrapes
+  instead of returning stale data.
 </ParamField>
 
 <ParamField body="timeout" type="number" default="500">

@@ -73,10 +73,10 @@ Set `alwaysRun: true` to always scrape, but compare with AI data:
 ```typescript
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
-    requestHandler: async ({ $, ai, pushData }) => {
+    requestHandler: async ({ $, brain, pushData }) => {
       const fresh = { title: $("h1").text() };
 
-      if (ai?.known && JSON.stringify(fresh) === JSON.stringify(ai.data)) {
+      if (brain?.known && JSON.stringify(fresh) === JSON.stringify(brain.data)) {
         console.log("Data unchanged");
       } else {
         console.log("New or changed data");

@@ -21,7 +21,7 @@ Concurrent requests:  req1, req2, req3, req4, req5
                            ↓
 Batched into items:   [{ ref, request }, ...]
                            ↓
-Single API call:      POST /v1/query { items: [...] }
+Single API call:      POST /v1/recall { items: [...] }
                            ↓
 Results distributed:  matched back to each caller by ref
 ```
@@ -55,11 +55,11 @@ await crawler.run(urls); // 100 URLs → ~2 API calls
 
 ## API Support
 
-The `/v1/query` API endpoint accepts multiple items in a single request:
+The `/v1/recall` API endpoint accepts multiple items in a single request:
 
 - Maximum **100 items** per request
 - Returns `known` and `unknown` arrays, each keyed by your `ref`
-- Billable per recognized item
+- Billable per known item
 
 The `/v1/learn` endpoint batches the same way, up to **50 entries** per request.
 

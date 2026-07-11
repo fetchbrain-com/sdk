@@ -27,33 +27,38 @@ async function main() {
 
   console.log('Knowledge base size after seeding:', mock.getKnowledgeSize());
 
-  // Test queries
-  console.log('\n=== Query known URL ===');
-  const known = await mock.query('https://example.com/known');
+  // Test recall
+  console.log('\n=== Recall known URL ===');
+  const known = await mock.recall({ url: 'https://example.com/known' });
   console.log('Result:', known);
 
-  console.log('\n=== Query unknown URL ===');
-  const unknown = await mock.query('https://example.com/new-page');
+  console.log('\n=== Recall unknown URL ===');
+  const unknown = await mock.recall({ url: 'https://example.com/new-page' });
   console.log('Result:', unknown);
 
   console.log('\n=== Learn new data ===');
-  await mock.learn('https://example.com/new', { title: 'New Product' });
+  await mock.learn({ url: 'https://example.com/new' }, { title: 'New Product' });
   console.log('Knowledge base size after learning:', mock.getKnowledgeSize());
 
-  console.log('\n=== Query newly learned URL ===');
-  const newData = await mock.query('https://example.com/new');
+  console.log('\n=== Recall newly learned URL ===');
+  const newData = await mock.recall({ url: 'https://example.com/new' });
   console.log('Result:', newData);
 
-  console.log('\n=== Bulk query ===');
-  const bulk = await mock.queryBulk([
+  console.log('\n=== Bulk recall ===');
+  const urls = [
     'https://example.com/product/1',
     'https://example.com/product/2',
     'https://example.com/product/unknown',
-  ]);
+  ];
+  const bulk = await mock.recallBulk(urls.map((url) => ({ url })));
   console.log('Bulk results:');
-  for (const [url, result] of bulk) {
-    console.log(`  ${url}: ${result.known ? 'KNOWN' : 'UNKNOWN'}`);
-  }
+  bulk.forEach((result, i) => {
+    console.log(`  ${urls[i]}: ${result.known ? 'KNOWN' : 'UNKNOWN'}`);
+  });
+
+  console.log('\n=== Ask a question ===');
+  const answer = await mock.ask('what is the price of product 1');
+  console.log('Sources:', answer.sources);
 
   console.log('\n=== Stats ===');
   const stats = await mock.stats();

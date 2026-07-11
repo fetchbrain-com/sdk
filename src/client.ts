@@ -1,11 +1,12 @@
 import type {
   FetchBrainConfig,
-  QueryRequest,
-  QueryResponse,
+  RecallRequest,
+  RecallResponse,
   LearnRequest,
   LearnResponse,
   StatsResponse,
-  AIResult,
+  RecallResult,
+  AskResponse,
   Logger,
   TelemetryData,
   TelemetryRequest,
@@ -15,10 +16,28 @@ import type {
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
 import { createLogger } from "./logger";
+import { buildNativeContext, getPlatformBuildId } from "./native-context";
 
 const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
 const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
+const ASK_TIMEOUT = 10000; // Ask hits the knowledge index; give it room like learn
+
+/**
+ * Thrown by makeRequest when the API responds with a non-2xx status.
+ * Carries the HTTP status so callers can decide whether a failure should
+ * count against the circuit breaker (client errors are the caller's fault,
+ * not the API's — they shouldn't trip degradation for everyone).
+ */
+class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    statusText: string,
+  ) {
+    super(`API error: ${status} ${statusText}`);
+    this.name = "ApiError";
+  }
+}
 
 /**
  * Scrape context sent with API requests
@@ -68,7 +87,7 @@ export class FetchBrainClient {
     this.config = {
       apiKey: config.apiKey,
       baseUrl: config.baseUrl || DEFAULT_BASE_URL,
-      intelligence: config.intelligence || "high",
+      memory: config.memory || "recent",
       learning: config.learning ?? true,
       alwaysRun: config.alwaysRun ?? false,
       refreshOnRebuild: config.refreshOnRebuild ?? false,
@@ -102,24 +121,24 @@ export class FetchBrainClient {
   }
 
   /**
-   * Query if FetchBrain "knows" a request
+   * Recall if FetchBrain "knows" a request
    */
-  async query(request: RawRequest): Promise<AIResult> {
+  async recall(request: RawRequest): Promise<RecallResult> {
     if (this.circuitBreaker.isOpen()) {
       return { known: false, fallback: true };
     }
     try {
       return await this.batcher.query(request);
     } catch (error) {
-      this.logger.debug("Query failed:", error);
+      this.logger.debug("Recall failed:", error);
       return { known: false, fallback: true };
     }
   }
 
   /**
-   * Query multiple requests at once — returns ordered array matching input order
+   * Recall multiple requests at once — returns ordered array matching input order
    */
-  async queryBulk(requests: RawRequest[]): Promise<AIResult[]> {
+  async recallBulk(requests: RawRequest[]): Promise<RecallResult[]> {
     if (this.circuitBreaker.isOpen()) {
       return requests.map(() => ({ known: false, fallback: true }));
     }
@@ -172,24 +191,65 @@ export class FetchBrainClient {
   }
 
   /**
+   * Ask a natural-language question against learned knowledge
+   */
+  async ask(
+    question: string,
+    opts?: { answer?: boolean; limit?: number },
+  ): Promise<AskResponse> {
+    if (this.circuitBreaker.isOpen()) {
+      return { sources: [], status: "unavailable" };
+    }
+
+    try {
+      const response = await this.makeRequest<AskResponse>(
+        "/v1/ask",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            query: question,
+            answer: opts?.answer,
+            limit: opts?.limit,
+          }),
+        },
+        ASK_TIMEOUT,
+      );
+      this.circuitBreaker.recordSuccess();
+      return response;
+    } catch (error) {
+      // A 4xx means the request itself was rejected (bad input, indexing
+      // disabled, etc.) — that's not the API degrading, so don't trip the
+      // breaker for every scraper sharing this client over it.
+      const isClientError =
+        error instanceof ApiError && error.status >= 400 && error.status < 500;
+      if (!isClientError) {
+        this.circuitBreaker.recordFailure();
+      }
+      this.logger.debug("Ask request failed:", error);
+      return { sources: [], status: "unavailable" };
+    }
+  }
+
+  /**
    * Execute a batch query against the API
    */
   private async executeBatchQuery(
     items: { ref: string; request: RawRequest }[],
-  ): Promise<Map<string, AIResult>> {
-    const results = new Map<string, AIResult>();
+  ): Promise<Map<string, RecallResult>> {
+    const results = new Map<string, RecallResult>();
 
-    const request: QueryRequest = {
+    const request: RecallRequest = {
       items,
-      intelligence: this.config.intelligence,
+      memory: this.config.memory,
     };
 
-    if (this.config.refreshOnRebuild && process.env.APIFY_ACTOR_BUILD_ID) {
-      request.build = process.env.APIFY_ACTOR_BUILD_ID;
+    const platformBuildId = getPlatformBuildId();
+    if (this.config.refreshOnRebuild && platformBuildId) {
+      request.build = platformBuildId;
     }
 
     try {
-      const response = await this.makeRequest<QueryResponse>("/v1/query", {
+      const response = await this.makeRequest<RecallResponse>("/v1/recall", {
         method: "POST",
         body: JSON.stringify(request),
       });
@@ -198,7 +258,7 @@ export class FetchBrainClient {
 
       // Index known items by ref
       for (const item of response.known) {
-        results.set(item.ref, { known: true, data: item.data, confidence: item.confidence });
+        results.set(item.ref, { known: true, data: item.data });
       }
 
       // Index unknown refs
@@ -270,15 +330,10 @@ export class FetchBrainClient {
       contextHeaders["X-FB-Env"] = process.env.NODE_ENV;
     }
 
-    // Apify context (auto-detected from environment)
-    if (process.env.APIFY_ACTOR_ID) {
-      contextHeaders["X-FB-Apify"] = process.env.APIFY_ACTOR_ID;
-    }
-    if (process.env.APIFY_ACTOR_BUILD_ID) {
-      contextHeaders["X-FB-Build"] = process.env.APIFY_ACTOR_BUILD_ID;
-    }
-    if (process.env.APIFY_ACTOR_RUN_ID) {
-      contextHeaders["X-FB-Apify-Run"] = process.env.APIFY_ACTOR_RUN_ID;
+    // Native platform context (allowlisted env vars, picked apart server-side)
+    const nativeContext = buildNativeContext();
+    if (nativeContext) {
+      contextHeaders["X-FB-Context"] = nativeContext;
     }
 
     // Scrape context
@@ -302,7 +357,7 @@ export class FetchBrainClient {
       });
 
       if (!response.ok) {
-        throw new Error(`API error: ${response.status} ${response.statusText}`);
+        throw new ApiError(response.status, response.statusText);
       }
 
       return (await response.json()) as T;

@@ -44,10 +44,10 @@ async function main() {
       // Use mock server for local testing
       apiKey: 'test_demo_key',
       baseUrl: 'http://localhost:3456',
-      
-      // High confidence AI responses
-      intelligence: 'high',
-      
+
+      // How far back the brain recalls
+      memory: 'recent',
+
       // Enable AI learning
       learning: true,
       

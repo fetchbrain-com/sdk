@@ -32,7 +32,7 @@ The SDK is fully typed. No additional `@types` packages needed.
 
 ```typescript
 import { FetchBrain } from "@fetchbrain.com/sdk";
-import type { FetchBrainConfig, AIResult } from "@fetchbrain.com/sdk";
+import type { FetchBrainConfig, RecallResult } from "@fetchbrain.com/sdk";
 ```
 
 ## Environment Variables
@@ -46,7 +46,7 @@ FETCHBRAIN_API_KEY=fb_live_your_api_key_here
 Then use it in your code:
 
 ```typescript
-const ai = new FetchBrain({
+const brain = new FetchBrain({
   apiKey: process.env.FETCHBRAIN_API_KEY!,
 });
 ```
@@ -56,12 +56,12 @@ const ai = new FetchBrain({
 ```typescript
 import { FetchBrain } from "@fetchbrain.com/sdk";
 
-const ai = new FetchBrain({
+const brain = new FetchBrain({
   apiKey: process.env.FETCHBRAIN_API_KEY!,
 });
 
 // Test connection
-const stats = await ai.stats();
+const stats = await brain.stats();
 console.log("Connected! Usage:", stats);
 ```
 

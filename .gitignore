@@ -29,3 +29,6 @@ coverage/
 # Temporary
 *.tmp
 *.temp
+
+# internal working notes — never publish
+.superpowers/

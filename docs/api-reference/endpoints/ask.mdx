@@ -1,0 +1,119 @@
+---
+title: Ask Endpoint
+description: "Ask a natural-language question against everything the brain has learned"
+openapi: "POST /v1/ask"
+---
+
+## Endpoint
+
+```http
+POST https://api.fetchbrain.com/v1/ask
+```
+
+Ask a natural-language question against everything FetchBrain has learned so
+far, instead of looking up a single URL. Useful for cross-page questions like
+"which products are out of stock?" that don't map to one `recall()` call.
+
+<Note>
+  Most developers reach this through the [SDK](/docs/sdk/enhance) —
+  `client.ask(question, options?)` on `FetchBrainClient`. Use the raw HTTP API
+  only for custom (non-Crawlee) integrations.
+</Note>
+
+## Request Body
+
+```json
+{
+  "query": "which products are under $20?",
+  "answer": false,
+  "limit": 10
+}
+```
+
+<ParamField body="query" type="string" required>
+  The natural-language question to ask.
+</ParamField>
+
+<ParamField body="answer" type="boolean" default="false">
+  When `true`, also generate a synthesized `answer` string from the matched
+  sources. When `false`, only `sources` are returned.
+</ParamField>
+
+<ParamField body="limit" type="number" default="10">
+  Maximum number of sources to return. Capped at **20**.
+</ParamField>
+
+## Response
+
+```json
+{
+  "sources": [
+    {
+      "score": 0.82,
+      "url": "https://example.com/product/123",
+      "data": { "title": "Product Name", "price": "$19.99" }
+    }
+  ],
+  "answer": "Product Name is $19.99 and in stock.",
+  "status": "ok"
+}
+```
+
+## Response Fields
+
+| Field             | Type   | Description                                            |
+| ----------------- | ------ | -------------------------------------------------------- |
+| `sources`         | array  | Matched knowledge entries, best match first               |
+| `sources[].score` | number | Relevance score 0–1                                      |
+| `sources[].url`   | string | Source URL, when available                                |
+| `sources[].data`  | object | The knowledge FetchBrain returned for this source          |
+| `answer`          | string | Synthesized answer (present only when `answer: true`)     |
+| `status`          | string | `ok` or `unavailable`                                     |
+
+## Examples
+
+<CodeGroup>
+```bash cURL
+curl -X POST "https://api.fetchbrain.com/v1/ask" \
+  -H "Authorization: Bearer fb_live_your_api_key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "which products are under $20?",
+    "limit": 5
+  }'
+```
+
+```javascript JavaScript
+import { FetchBrainClient } from "@fetchbrain.com/sdk";
+
+const client = new FetchBrainClient({
+  apiKey: process.env.FETCHBRAIN_API_KEY!,
+});
+
+const answer = await client.ask("which products are under $20?", { limit: 5 });
+console.log(answer.sources);
+```
+
+```python Python
+import requests
+
+response = requests.post(
+    "https://api.fetchbrain.com/v1/ask",
+    headers={
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    },
+    json={"query": "which products are under $20?", "limit": 5},
+)
+
+result = response.json()
+print(result["sources"])
+```
+
+</CodeGroup>
+
+<Note>
+  `ask()` degrades gracefully like the rest of the SDK: if the API is
+  unavailable, it returns `{ sources: [], status: "unavailable" }` instead of
+  throwing.
+</Note>

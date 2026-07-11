@@ -7,15 +7,15 @@ description: "Use FetchBrain without Crawlee"
 
 For custom integrations or non-Crawlee scrapers, use the FetchBrain class directly.
 The class exposes URL-based convenience methods that build the underlying
-batch wire (`{ items: [{ ref, request }] }` for query, `{ entries: [{ request, data }] }`
+batch wire (`{ items: [{ ref, request }] }` for recall, `{ entries: [{ request, data }] }`
 for learn) for you.
 
 <Note>
   Identity is derived **server-side** from `(method, normalized url, uniqueKey)`.
-  The `FetchBrain.query({ url })` / `learn({ url, data })` helpers key by URL. If
+  The `FetchBrain.recall({ url })` / `learn({ url, data })` helpers key by URL. If
   you scrape several distinct resources behind one URL (POST or GraphQL
   endpoints), call the lower-level client with a `uniqueKey` so each is stored
-  separately — see [the Query endpoint](/docs/api-reference/endpoints/query).
+  separately — see [the Recall endpoint](/docs/api-reference/endpoints/recall).
 </Note>
 
 ## Basic Usage
@@ -23,34 +23,33 @@ for learn) for you.
 ```typescript
 import { FetchBrain } from "@fetchbrain.com/sdk";
 
-const ai = new FetchBrain({
+const brain = new FetchBrain({
   apiKey: process.env.FETCHBRAIN_API_KEY,
-  intelligence: "high",
+  memory: "recent",
 });
 
-// Check if AI knows a URL
-const result = await ai.query({ url: "https://example.com/product/123" });
+// Check if the brain knows a URL
+const result = await brain.recall({ url: "https://example.com/product/123" });
 
 if (result.known) {
-  console.log("AI knows:", result.data);
-  console.log("Confidence:", result.confidence);
+  console.log("Brain knows:", result.data);
 } else {
   // Fetch and teach
   const data = await scrapeUrl("https://example.com/product/123");
-  await ai.learn({ url: "https://example.com/product/123", data });
+  await brain.learn({ url: "https://example.com/product/123", data });
 }
 ```
 
 ## Methods
 
-### `query(options)`
+### `recall(options)`
 
-Check if the AI knows a URL.
+Check if the brain knows a URL.
 
 ```typescript
-const result = await ai.query({
+const result = await brain.recall({
   url: "https://example.com/product/123",
-  intelligence: "high", // Optional, overrides default
+  memory: "recent", // Optional, overrides default
 });
 ```
 
@@ -59,17 +58,16 @@ const result = await ai.query({
 ```typescript
 {
   known: boolean;
-  data?: object;       // present when known
-  confidence?: number; // 0–1, present when known
+  data?: object; // present when known
 }
 ```
 
 ### `learn(options)`
 
-Teach the AI about a URL.
+Teach the brain about a URL.
 
 ```typescript
-await ai.learn({
+await brain.learn({
   url: "https://example.com/product/123",
   data: { title: "Product Name", price: 99.99 },
 });
@@ -80,15 +78,32 @@ await ai.learn({
 Get your usage statistics.
 
 ```typescript
-const stats = await ai.stats();
+const stats = await brain.stats();
 console.log(stats);
 // {
 //   queries: 46753,
-//   recognized: 45230,
-//   recognitionRate: 0.97,
+//   known: 45230,
+//   recallRate: 0.97,
 //   learned: 1523,
 //   period: "2026-06"
 // }
+```
+
+## Asking Questions
+
+`ask()` is available on the lower-level `FetchBrainClient` — either the one
+attached to an enhanced crawler (`crawler.fetchBrain`) or one you construct
+directly for standalone use:
+
+```typescript
+import { FetchBrainClient } from "@fetchbrain.com/sdk";
+
+const client = new FetchBrainClient({
+  apiKey: process.env.FETCHBRAIN_API_KEY!,
+});
+
+const answer = await client.ask("what products are under $20?", { limit: 5 });
+console.log(answer.sources);
 ```
 
 ## Full Example
@@ -97,7 +112,7 @@ console.log(stats);
 import { FetchBrain } from "@fetchbrain.com/sdk";
 
 async function main() {
-  const ai = new FetchBrain({
+  const brain = new FetchBrain({
     apiKey: process.env.FETCHBRAIN_API_KEY!,
   });
 
@@ -108,10 +123,10 @@ async function main() {
   ];
 
   for (const url of urls) {
-    const result = await ai.query({ url });
+    const result = await brain.recall({ url });
 
     if (result.known) {
-      console.log(`✓ AI knows ${url}:`, result.data);
+      console.log(`✓ Brain knows ${url}:`, result.data);
     } else {
       console.log(`→ Fetching ${url}...`);
 
@@ -120,14 +135,14 @@ async function main() {
       const html = await response.text();
       const data = parseProduct(html);
 
-      // Teach the AI
-      await ai.learn({ url, data });
-      console.log(`✓ Taught AI about ${url}`);
+      // Teach the brain
+      await brain.learn({ url, data });
+      console.log(`✓ Taught the brain about ${url}`);
     }
   }
 
   // Check stats
-  const stats = await ai.stats();
-  console.log("Recognition rate:", stats.recognitionRate);
+  const stats = await brain.stats();
+  console.log("Recall rate:", stats.recallRate);
 }
 ```

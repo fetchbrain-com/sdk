@@ -5,16 +5,17 @@
  */
 
 import type {
-  AIResult,
+  RecallResult,
   LearnResponse,
   StatsResponse,
+  AskResponse,
   FetchBrainConfig,
   RawRequest,
 } from "../types";
 import { deriveIdentity } from "./derive-identity";
 
 export interface MockFetchBrainOptions {
-  /** Pre-trained AI knowledge */
+  /** Pre-trained memory */
   initialKnowledge?: Map<string, Record<string, unknown>>;
   /** Simulate API failures */
   simulateFailures?: boolean;
@@ -30,10 +31,10 @@ export interface MockFetchBrainOptions {
 export class MockFetchBrain {
   private knowledge: Map<
     string,
-    { data: Record<string, unknown>; learnedAt: string }
+    { url: string; data: Record<string, unknown>; learnedAt: string }
   >;
   private options: MockFetchBrainOptions;
-  private _stats = { queries: 0, recognized: 0, learned: 0 };
+  private _stats = { queries: 0, known: 0, learned: 0 };
 
   constructor(options: MockFetchBrainOptions = {}) {
     this.knowledge = new Map();
@@ -48,6 +49,7 @@ export class MockFetchBrain {
     if (options.initialKnowledge) {
       for (const [url, data] of options.initialKnowledge) {
         this.knowledge.set(deriveIdentity({ url }), {
+          url,
           data,
           learnedAt: new Date().toISOString(),
         });
@@ -66,7 +68,7 @@ export class MockFetchBrain {
     return Math.random() < (this.options.failureRate || 0.1);
   }
 
-  async query(request: RawRequest): Promise<AIResult> {
+  async recall(request: RawRequest): Promise<RecallResult> {
     await this.simulateLatency();
 
     if (this.shouldFail()) {
@@ -77,19 +79,18 @@ export class MockFetchBrain {
     const known = this.knowledge.get(deriveIdentity(request));
 
     if (known) {
-      this._stats.recognized++;
+      this._stats.known++;
       return {
         known: true,
         data: known.data,
-        confidence: 0.97,
       };
     }
 
     return { known: false };
   }
 
-  async queryBulk(requests: RawRequest[]): Promise<AIResult[]> {
-    return Promise.all(requests.map((r) => this.query(r)));
+  async recallBulk(requests: RawRequest[]): Promise<RecallResult[]> {
+    return Promise.all(requests.map((r) => this.recall(r)));
   }
 
   async learn(
@@ -103,6 +104,7 @@ export class MockFetchBrain {
     }
 
     this.knowledge.set(deriveIdentity(request), {
+      url: request.url,
       data,
       learnedAt: new Date().toISOString(),
     });
@@ -117,10 +119,10 @@ export class MockFetchBrain {
   async stats(): Promise<StatsResponse> {
     return {
       queries: this._stats.queries,
-      recognized: this._stats.recognized,
-      recognitionRate:
+      known: this._stats.known,
+      recallRate:
         this._stats.queries > 0
-          ? this._stats.recognized / this._stats.queries
+          ? this._stats.known / this._stats.queries
           : 0,
       learned: this._stats.learned,
       period: new Date().toISOString().slice(0, 7),
@@ -128,11 +130,58 @@ export class MockFetchBrain {
   }
 
   /**
-   * Seed the AI with test data (url-keyed convenience API)
+   * Naive ask(): substring-match the query's words against seeded data.
+   * When `opts.answer` is truthy, also returns a canned `answer` string
+   * built from the top source — it is NOT a real synthesized answer, just
+   * enough of the shape for callers to test against.
    */
-  seed(entries: Array<{ url: string; data: Record<string, unknown> }>): void {
+  async ask(
+    query: string,
+    opts?: { answer?: boolean; limit?: number },
+  ): Promise<AskResponse> {
+    const cap = Math.min(Math.max(1, opts?.limit ?? 10), 20);
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const sources = [...this.knowledge.values()]
+      .map((entry) => {
+        const haystack = JSON.stringify(entry.data).toLowerCase();
+        const score =
+          words.filter((w) => haystack.includes(w)).length /
+          Math.max(words.length, 1);
+        return { score, url: entry.url, data: entry.data };
+      })
+      .filter((s) => s.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, cap);
+
+    if (!opts?.answer) {
+      return { sources, status: "ok" };
+    }
+
+    const answer =
+      sources.length > 0
+        ? `Based on ${sources.length} remembered page${sources.length === 1 ? "" : "s"}: ${JSON.stringify(sources[0].data)}`
+        : "Nothing remembered yet for that question.";
+
+    return { sources, status: "ok", answer };
+  }
+
+  /**
+   * Seed the brain with test data (url-keyed convenience API).
+   * Accepts a single (url, data) pair or an array of entries.
+   */
+  seed(url: string, data: Record<string, unknown>): void;
+  seed(entries: Array<{ url: string; data: Record<string, unknown> }>): void;
+  seed(
+    urlOrEntries: string | Array<{ url: string; data: Record<string, unknown> }>,
+    data?: Record<string, unknown>,
+  ): void {
+    const entries =
+      typeof urlOrEntries === "string"
+        ? [{ url: urlOrEntries, data: data ?? {} }]
+        : urlOrEntries;
     for (const entry of entries) {
       this.knowledge.set(deriveIdentity({ url: entry.url }), {
+        url: entry.url,
         data: entry.data,
         learnedAt: new Date().toISOString(),
       });
@@ -140,11 +189,11 @@ export class MockFetchBrain {
   }
 
   /**
-   * Clear all AI knowledge
+   * Clear all remembered data
    */
   clear(): void {
     this.knowledge.clear();
-    this._stats = { queries: 0, recognized: 0, learned: 0 };
+    this._stats = { queries: 0, known: 0, learned: 0 };
   }
 
   /**
@@ -155,7 +204,7 @@ export class MockFetchBrain {
   }
 
   /**
-   * Check if AI knows a URL (keys by deriveIdentity({ url }))
+   * Check if the brain knows a URL (keys by deriveIdentity({ url }))
    */
   has(url: string): boolean {
     return this.knowledge.has(deriveIdentity({ url }));
@@ -171,7 +220,7 @@ export function createMockConfig(
   return {
     apiKey: "test_mock_key",
     baseUrl: "http://localhost:3456",
-    intelligence: "high",
+    memory: "recent",
     learning: true,
     timeout: 5000,
     debug: false,

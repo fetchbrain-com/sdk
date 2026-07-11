@@ -9,10 +9,10 @@ The SDK includes a mock client for unit testing without hitting the production A
 
 ## MockFetchBrain
 
-`MockFetchBrain` mirrors the real client: `query()` and `learn()` take a raw
+`MockFetchBrain` mirrors the real client: `recall()` and `learn()` take a raw
 request object (`{ url, method?, uniqueKey?, ... }`), and `initialKnowledge` is a
 `Map` keyed by URL. The mock derives the same `(method, url, uniqueKey)` identity
-the API does, so a query matches what you seeded.
+the API does, so a recall matches what you seeded.
 
 ```typescript
 import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
@@ -24,8 +24,8 @@ const mock = new MockFetchBrain({
   ]),
 });
 
-// query() takes a request object, not a bare string
-const result = await mock.query({ url: "https://example.com/product/1" });
+// recall() takes a request object, not a bare string
+const result = await mock.recall({ url: "https://example.com/product/1" });
 expect(result.known).toBe(true);
 expect(result.data?.title).toBe("Known Product");
 ```
@@ -36,19 +36,19 @@ expect(result.data?.title).toBe("Known Product");
 import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
 
 describe("My Scraper", () => {
-  it("uses AI data when known", async () => {
+  it("uses brain data when known", async () => {
     const mock = new MockFetchBrain({
       initialKnowledge: new Map([["https://example.com", { title: "Test" }]]),
     });
 
-    const result = await mock.query({ url: "https://example.com" });
+    const result = await mock.recall({ url: "https://example.com" });
     expect(result.known).toBe(true);
   });
 
   it("returns unknown for new URLs", async () => {
     const mock = new MockFetchBrain();
 
-    const result = await mock.query({ url: "https://newsite.com" });
+    const result = await mock.recall({ url: "https://newsite.com" });
     expect(result.known).toBe(false);
   });
 
@@ -60,14 +60,20 @@ describe("My Scraper", () => {
       { title: "Freshly scraped" }
     );
 
-    const result = await mock.query({ url: "https://example.com/new" });
+    const result = await mock.recall({ url: "https://example.com/new" });
     expect(result.known).toBe(true);
   });
 });
 ```
 
 `MockFetchBrain` also exposes test helpers: `seed([{ url, data }])`,
-`clear()`, `has(url)`, and `getKnowledgeSize()`.
+`clear()`, `has(url)`, and `getKnowledgeSize()`. It also implements `ask()`,
+mirroring the real API's naive substring-match behavior for local testing.
+
+```typescript
+const answer = await mock.ask("known product");
+expect(answer.sources.length).toBeGreaterThan(0);
+```
 
 ## Mock Server
 
@@ -81,7 +87,7 @@ npm run mock-server
 Then point your code to localhost:
 
 ```typescript
-const ai = new FetchBrain({
+const brain = new FetchBrain({
   apiKey: "test_local_key",
   baseUrl: "http://localhost:3456",
 });

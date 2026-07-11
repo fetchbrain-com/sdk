@@ -21,14 +21,15 @@ Get your API key from [Dashboard → API Keys](https://fetchbrain.com/dashboard/
 
 ## Endpoints
 
-| Method | Endpoint    | Description                              |
-| ------ | ----------- | ---------------------------------------- |
-| POST   | `/v1/query` | Ask whether the AI knows one or more requests |
-| POST   | `/v1/learn` | Teach the AI about one or more requests  |
-| GET    | `/v1/stats` | Get usage statistics                     |
+| Method | Endpoint     | Description                              |
+| ------ | ------------ | ---------------------------------------- |
+| POST   | `/v1/recall` | Ask whether the brain knows one or more requests |
+| POST   | `/v1/ask`    | Ask a natural-language question against learned knowledge |
+| POST   | `/v1/learn`  | Teach the brain about one or more requests  |
+| GET    | `/v1/stats`  | Get usage statistics                     |
 
-Both `/v1/query` and `/v1/learn` are batch endpoints — send an array of items
-(query) or entries (learn) in a single request.
+Both `/v1/recall` and `/v1/learn` are batch endpoints — send an array of items
+(recall) or entries (learn) in a single request.
 
 ## How identity works
 

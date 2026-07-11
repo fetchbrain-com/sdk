@@ -1,0 +1,71 @@
+---
+title: Memory Depth
+description: "Configure how far back the brain recalls"
+---
+
+## Overview
+
+Memory depth controls how far back the brain looks when deciding whether it already knows a page vs suggesting a fresh scrape.
+
+## Available Depths
+
+| Depth      | Window | Description                         | Best For                        |
+| ---------- | ------ | ------------------------------------ | -------------------------------- |
+| `fresh`    | 1h     | Only the most recent knowledge      | Critical data, real-time prices |
+| `recent`   | 24h    | Balanced recall window (default)    | Most use cases                  |
+| `standard` | 7d     | Broader recall, slower-changing data | High-volume scraping            |
+| `deep`     | 30d    | Deepest recall, broadest coverage   | Historical data                 |
+
+## Usage
+
+```typescript
+const crawler = FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  memory: "recent", // Default
+});
+```
+
+## Choosing the Right Depth
+
+### `fresh`
+
+- Narrowest recall window, most likely to trigger a re-scrape
+- Best for: stock prices, inventory levels, time-sensitive data
+- Trade-off: Lower recall rate
+
+### `recent` (Recommended)
+
+- Balanced recall window
+- Best for: product pages, articles, general scraping
+- Trade-off: Good balance of speed and freshness
+
+### `standard`
+
+- Broader recall window
+- Best for: large-scale scraping, less time-sensitive data
+- Trade-off: May return slightly stale data
+
+### `deep`
+
+- Widest recall window
+- Best for: historical data, archive scraping
+- Trade-off: May include older versions
+
+## Example
+
+```typescript
+// High-frequency price monitoring
+const priceMonitor = FetchBrain.enhance(crawler, {
+  memory: "fresh",
+});
+
+// General product catalog
+const catalogScraper = FetchBrain.enhance(crawler, {
+  memory: "recent",
+});
+
+// Archive scraping
+const archiveScraper = FetchBrain.enhance(crawler, {
+  memory: "deep",
+});
+```

@@ -1,4 +1,4 @@
-import type { BatchConfig, AIResult, Logger, LearnResponse, RawRequest } from "./types";
+import type { BatchConfig, RecallResult, Logger, LearnResponse, RawRequest } from "./types";
 
 const DEFAULT_CONFIG: BatchConfig = {
   maxSize: 50,
@@ -8,11 +8,11 @@ const DEFAULT_CONFIG: BatchConfig = {
 interface PendingRequest {
   ref: string;
   request: RawRequest;
-  resolve: (result: AIResult) => void;
+  resolve: (result: RecallResult) => void;
   reject: (error: Error) => void;
 }
 
-type BatchExecutor = (items: { ref: string; request: RawRequest }[]) => Promise<Map<string, AIResult>>;
+type BatchExecutor = (items: { ref: string; request: RawRequest }[]) => Promise<Map<string, RecallResult>>;
 
 /**
  * Request Batcher
@@ -41,7 +41,7 @@ export class RequestBatcher {
   /**
    * Add a request to the batch queue
    */
-  async query(request: RawRequest): Promise<AIResult> {
+  async query(request: RawRequest): Promise<RecallResult> {
     return new Promise((resolve, reject) => {
       this.queue.push({ ref: String(this.refSeq++), request, resolve, reject });
 
