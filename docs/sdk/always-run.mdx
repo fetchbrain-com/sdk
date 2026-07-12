@@ -1,25 +1,25 @@
 ---
 title: Always Run Mode
-description: "Control which handlers run when AI knows the page"
+description: "Control which handlers run when the brain already knows the request"
 ---
 
 ## Overview
 
-By default, when the AI knows a page, your handler is skipped to save time. The `alwaysRun` option lets you control this behavior.
+By default, when the brain already knows a request, your handler is skipped to save time. The `alwaysRun` option lets you control this behavior.
 
 ## Values
 
-| Value                     | Behavior                              |
-| ------------------------- | ------------------------------------- |
-| `false` (default)         | Skip all handlers when AI knows       |
-| `true`                    | Always run all handlers               |
-| `'listing'`               | Only run handler with label 'listing' |
-| `['listing', 'category']` | Run handlers with these labels        |
+| Value                     | Behavior                                     |
+| ------------------------- | --------------------------------------------- |
+| `false` (default)         | Skip all handlers when the request is known  |
+| `true`                    | Always run all handlers                      |
+| `'listing'`               | Only run handler with label 'listing'        |
+| `['listing', 'category']` | Run handlers with these labels               |
 
 ## Usage
 
 ```typescript
-// Skip all handlers when AI knows (default)
+// Skip all handlers when the request is known (default)
 FetchBrain.enhance(crawler, { alwaysRun: false });
 
 // Always run all handlers
@@ -50,7 +50,7 @@ router.addHandler("listing", async ({ $, pushData }) => {
 });
 
 router.addHandler("detail", async ({ $, pushData }) => {
-  // Detail page - can skip if AI knows
+  // Detail page - can skip if the brain knows it
   await pushData({ title: $("h1").text() });
 });
 
@@ -66,9 +66,9 @@ const crawler = FetchBrain.enhance(
 
 ## Use Cases
 
-### Full scraping with AI comparison
+### Full scraping with brain comparison
 
-Set `alwaysRun: true` to always scrape, but compare with AI data:
+Set `alwaysRun: true` to always scrape, but compare with the brain's data:
 
 ```typescript
 const crawler = FetchBrain.enhance(
@@ -92,7 +92,7 @@ const crawler = FetchBrain.enhance(
 
 ```typescript
 const crawler = FetchBrain.enhance(crawler, {
-  // Run discovery handlers, skip detail when AI knows
+  // Run discovery handlers, skip detail when the request is known
   alwaysRun: ["listing", "category", "search"],
 });
 ```

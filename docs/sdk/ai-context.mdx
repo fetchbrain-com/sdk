@@ -13,9 +13,9 @@ When using `FetchBrain.enhance()`, your request handler receives a `brain` prope
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
     requestHandler: async ({ $, request, brain, pushData }) => {
-      // Check if the brain already knows this page
+      // Check if the brain already knows this request
       if (brain?.known) {
-        console.log("Brain knows this page");
+        console.log("Brain knows this request");
 
         // Option 1: Use brain data directly (skip scraping)
         await brain.use();
@@ -36,10 +36,10 @@ const crawler = FetchBrain.enhance(
 ```
 
 <Note>
-  By default, when the brain knows a page the handler is skipped entirely — so
+  By default, when the brain knows a request the handler is skipped entirely — so
   the only time your handler runs and can read `brain.known === true` is when
   you opt in with `alwaysRun` (either `true`, or a label list that matches this
-  request). Without `alwaysRun`, the handler only runs for pages the brain does
+  request). Without `alwaysRun`, the handler only runs for requests the brain does
   **not** know.
 </Note>
 
@@ -59,7 +59,7 @@ const crawler = FetchBrain.enhance(
 
 ## Use Cases
 
-### Skip scraping when the brain knows
+### Skip scraping when the request is known
 
 ```typescript
 if (brain?.known) {

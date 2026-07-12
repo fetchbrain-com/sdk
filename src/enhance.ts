@@ -191,12 +191,16 @@ export class FetchBrain {
     const client = new FetchBrainClient(config);
     const logger = createLogger(config.debug ? "debug" : "info", true);
 
+    // Telemetry is OPT-IN — enable it to join the access-intelligence network
+    // (`telemetry: { enabled: true }`). Anonymized when on; off otherwise.
+    const telemetryConfig = config.telemetry ?? { enabled: false };
+
     // Telemetry buffer - automatically flushes to API
     const telemetryBuffer = new TelemetryBuffer({
       maxSize: 50,
       flushInterval: 30000,
       onFlush: async (entries: TelemetryData[]) => {
-        if (config.telemetry?.enabled) {
+        if (telemetryConfig.enabled) {
           await client.sendTelemetry(entries);
           logger.debug(`Telemetry: sent ${entries.length} entries`);
         }
@@ -339,7 +343,7 @@ export class FetchBrain {
         });
 
         // Collect telemetry (if enabled) - behind the scenes
-        if (config.telemetry?.enabled) {
+        if (telemetryConfig.enabled) {
           try {
             const telemetry = await collectTelemetry(
               {
@@ -377,7 +381,7 @@ export class FetchBrain {
                 responseTime: Date.now() - startTime,
                 contentSize: (context as any).response?.body?.length,
               },
-              config.telemetry,
+              telemetryConfig,
             );
 
             if (telemetry) {
@@ -390,7 +394,7 @@ export class FetchBrain {
         }
       } catch (err) {
         // On error, still collect telemetry with error info
-        if (config.telemetry?.enabled) {
+        if (telemetryConfig.enabled) {
           try {
             const telemetry = await collectTelemetry(
               {
@@ -408,7 +412,7 @@ export class FetchBrain {
                 endTime: Date.now(),
                 responseTime: Date.now() - startTime,
               },
-              config.telemetry,
+              telemetryConfig,
               err instanceof Error ? err : new Error(String(err)),
             );
 
@@ -449,7 +453,7 @@ export class FetchBrain {
           await client.flushLearnBatch();
 
           // Flush telemetry buffer when crawl completes
-          if (config.telemetry?.enabled) {
+          if (telemetryConfig.enabled) {
             logger.debug("Telemetry: flushing on crawl complete");
             await telemetryBuffer.stop();
           }

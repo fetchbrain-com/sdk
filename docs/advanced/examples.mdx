@@ -89,7 +89,7 @@ router.addHandler("listing", async ({ $, enqueueLinks }) => {
 });
 
 router.addHandler("detail", async ({ $, pushData }) => {
-  // Detail - skip if AI knows
+  // Detail - skip if the brain knows it
   await pushData({
     title: $("h1").text(),
     price: $(".price").text(),

@@ -7,19 +7,13 @@
 
 **Make your scrapers smarter with every run.**
 
-`@fetchbrain.com/sdk` — AI-powered scraping optimization for Crawlee. Recall before you fetch; teach what you learn.
+*Your crawler teaches it once. It recognizes forever.*
 
 [![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk) [![TypeScript](https://img.shields.io/badge/TypeScript-first-3178C6.svg)](https://www.typescriptlang.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 [Quick start](#quick-start) · [How it works](#how-it-works) · [Docs](https://docs.fetchbrain.com) · [Examples](./examples) · [Changelog](./CHANGELOG.md)
 
 </div>
-
-- 🚀 **Instant Results** - Skip redundant HTTP requests with memory it has already learned
-- 🔄 **Auto-Learning** - AI automatically learns from scraped pages
-- 🛡️ **Graceful Degradation** - Circuit breaker ensures your scraper never fails
-- 📦 **Request Batching** - Optimized for high-concurrency scrapers
-- 🔌 **Crawlee Compatible** - Works with CheerioCrawler, PlaywrightCrawler, and more
 
 ---
 
@@ -86,26 +80,35 @@ That's it. Your handler only runs when there's something new to learn.
 - 🛡️ **Never breaks your crawl** — circuit breaker degrades gracefully; a FetchBrain outage costs you optimization, never data
 - 📦 **Built for scale** — request batching and deduping for high-concurrency crawlers
 - 🔌 **Crawlee-native** — CheerioCrawler, PlaywrightCrawler, and friends
-- 🔒 **Private by design** — only platform identifiers (`*_ID` env vars) ever leave your process; your data is scoped to your key
+- 🔒 **Private by design** — your data is scoped to your key; only your requests, what you choose to learn, and platform identifiers (`*_ID` env vars) leave your process. Anonymized telemetry is **opt-in** ([opt-in telemetry](#telemetry-opt-in))
 - 🧪 **TypeScript-first** — full types, ESM + CJS, zero config
 
 ## Who is it for?
 
-**Solo scraper developers** — stop paying twice for the same request. Your
-daily product crawl, your price monitor, your side-project spider: they
-all deposit into one brain, your proxy bill shrinks every run, and you can
-`ask()` questions across everything you've ever collected.
+FetchBrain pays off wherever the **same expensive request gets made more
+than once** — across a fleet, across users, or across runs. It won't speed
+up a first-ever fetch of a brand-new URL, and it's not for freshness-critical
+monitoring where you always need the live value. Everywhere else, it compounds:
 
-**Data-service and scraping companies** — fetch once, serve many. Repeat
-crawls across pipelines and clients amortize against the same pool,
-per-run costs fall as coverage grows, and the brain doubles as a
-natural-language query layer over your whole corpus — without building a
-warehouse first.
+**Data-service teams & aggregators** — fetch an expensive request once, serve
+it to every client and job. Overlapping crawls draw from one shared pool, so
+per-run proxy and compute cost falls as coverage grows — and `ask()` turns
+everything you've collected into a queryable corpus, with no warehouse to run.
 
-**Teams running scheduled crawls** — daily and hourly re-runs are where
-the savings explode: after the first pass, a stable site costs almost
-nothing to keep monitoring, and volatile data stays fresh with `memory:
-"fresh"`.
+**Product teams & AI agents** — apps and browsing agents that re-hit popular
+requests get them back in milliseconds, straight from memory: no fetch, no
+proxy, no block. The more your users (or agents) converge on the same
+requests, the more the pool pays off.
+
+**Recurring crawls of stable data** — catalogs, specs, listings, company and
+reference data barely change between runs, so recall skips the fetch and each
+scheduled run costs less. Keep volatile fields on `memory: "fresh"` so you
+never trade accuracy for speed.
+
+**Solo scraper developers** — start free: learning never costs anything, and
+the requests you've already made come back instantly instead of getting
+blocked or throttled. One line to add, one brain that grows with everything
+you scrape.
 
 ## Quick start
 
@@ -129,8 +132,7 @@ const crawler = FetchBrain.enhance(
   }),
   {
     apiKey: process.env.FETCHBRAIN_API_KEY,
-    memory: "recent", // How far back the brain recalls (see below)
-    learning: true, // AI learns from scraped pages
+    memory: "recent", // how far back the brain recalls (see below)
   },
 );
 
@@ -320,6 +322,29 @@ The circuit breaker is not an afterthought — it's the core design contract:
 A FetchBrain problem can cost you *optimization*, never *data*. Every SDK
 call degrades gracefully; none of them throw into your crawl.
 
+## Telemetry (opt-in)
+
+Telemetry is **off by default.** You can opt in to send anonymized
+operational diagnostics that help improve FetchBrain:
+
+```typescript
+FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  telemetry: { enabled: true },
+});
+```
+
+**What's sent** (all anonymized): domain (e.g. `walmart.com`), a SHA-256
+**hash** of the full URL, a generalized path pattern, timing and status
+codes, retry counts, proxy **country/type** and success, coarse session
+aggregates (age, error rate, cookie *count*), block indicators, and crawler
+type. **Never:** raw URLs, request/response bodies, cookies or their values,
+proxy IPs, credentials, or any PII.
+
+Share selectively with the sub-flags — e.g.
+`telemetry: { enabled: true, shareProxyInfo: false }`. Collection is
+buffered, best-effort, and never blocks or fails your crawl.
+
 ## Testing
 
 `MockFetchBrain` ships with the SDK — seed it, run your tests, no network:
@@ -371,9 +396,10 @@ per scraper identity, so one scraper's responses never pollute
 another's results.
 
 **What leaves my process?**
-Your requests, the data you choose to learn, and platform identifiers only
-(env vars ending in `_ID`, plus `NODE_ENV`/`REGION`/`CI`). Never your
-environment, credentials, or anything credential-shaped — [see the changelog](./CHANGELOG.md).
+By default: your requests, the data you choose to learn, and platform
+identifiers (env vars ending in `_ID`, plus `NODE_ENV`/`REGION`/`CI`). Never
+your general environment, credentials, or anything credential-shaped. If you
+opt into telemetry, anonymized access signal too — [see what](#telemetry-opt-in).
 
 **What does learning cost?**
 Nothing. Learning is always free — you pay only for known queries.

@@ -5,13 +5,13 @@ description: "Automatic request batching for high-concurrency scrapers"
 
 ## Overview
 
-FetchBrain automatically batches individual URL queries into bulk API calls to reduce connections and improve performance for high-concurrency scrapers.
+FetchBrain automatically batches individual recall requests into bulk API calls to reduce connections and improve performance for high-concurrency scrapers.
 
 ## How It Works
 
 When running multiple concurrent requests, the SDK:
 
-1. Queues individual request queries
+1. Queues individual recall requests
 2. Waits for a short window
 3. Sends all queued requests as `items` in a single API call
 4. Returns results to each caller, matched by `ref`

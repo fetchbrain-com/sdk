@@ -1,54 +1,124 @@
 ---
 title: Introduction
-description: "Make your scrapers smarter with every run — memory-powered scraping optimization"
+description: "A shared memory pool for your scrapers — recall what's known, learn what's new, ask questions across everything"
 ---
 
 # Welcome to FetchBrain
 
-FetchBrain uses a neural network continuously trained on millions of web pages. **Ask first → Get instant results.** AI doesn't know? → We fetch & learn for next time.
+Every scraping run re-fetches requests you already made last time — paying
+for proxies, browsers, retries, and CAPTCHAs to re-learn things you already
+know. FetchBrain gives your scrapers a **shared memory pool**: known
+requests come back in milliseconds with zero HTTP traffic; unknown ones run
+normally and teach the brain for next time.
 
-## How It Works
+## The two-half model
 
-```
-Your Scraper → FetchBrain SDK → AI knows? → YES → Return AI knowledge (skip request)
-                              → NO  → Run scraper → AI learns for next time
-```
-
-1. **Before each request**, FetchBrain queries the AI if it "knows" the URL
-2. **AI knows**: Return data instantly from neural inference, skip HTTP request
-3. **AI learning**: Run your scraper normally, then teach the AI
-
-## Key Features
+FetchBrain is two capabilities working together:
 
 <CardGroup cols={2}>
-  <Card title="Instant Results" icon="bolt">
-    Skip redundant HTTP requests with pre-trained knowledge
+  <Card title="Memory" icon="database">
+    **Recall** and **learn**. Before each request, the SDK asks "do I
+    already know this?" Known requests skip the network entirely. Unknown
+    ones run your handler, then teach the brain — automatically, and always
+    free.
   </Card>
-  <Card title="Auto-Learning" icon="brain">
-    AI automatically learns from scraped pages
-  </Card>
-  <Card title="Graceful Degradation" icon="shield-check">
-    Circuit breaker ensures your scraper never fails
-  </Card>
-  <Card title="Crawlee Compatible" icon="plug">
-    Works with CheerioCrawler, PlaywrightCrawler, and more
+  <Card title="Intelligence" icon="sparkles">
+    **Ask.** Once your scrapers have taught the brain enough, `ask()` runs a
+    natural-language question across **everything** learned under your key
+    — no exact URL, no warehouse, no second pipeline.
   </Card>
 </CardGroup>
 
-## Pricing Model
+Memory is what makes repeat runs cheap. Intelligence is what makes the
+accumulated data useful for more than the one scraper that collected it.
+
+## How it works
+
+```
+Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES ──▶ data back, no fetch
+                                      │
+                                      └──▶ NO ──▶ your handler runs ──▶ brain learns, free
+```
+
+1. **Recall** — before each request, the SDK asks the brain if it already knows it
+2. **Known** — data returns instantly and the HTTP request is skipped
+3. **Learning** — unknown requests run through your handler as normal, and the result teaches the brain for every future run
+
+This works for **any request, not just pages** — HTML, JSON APIs, POSTs with
+bodies. Identity is derived from the full request server-side, so it isn't
+limited to GET-and-a-URL scraping.
+
+## Why a shared pool
+
+Everything your scrapers learn accumulates under one API key — not one
+scraper, not one run. Your daily product crawl, your price monitor, and your
+side-project spider all deposit into the same brain. That compounding has
+two payoffs:
+
+- **Cost falls as coverage grows.** The more you've already taught the
+  brain, the fewer requests need a real fetch on the next run.
+- **`ask()` sees across all of it.** A question like "which products are
+  under $20?" doesn't care which scraper originally learned that price —
+  it searches the whole pool.
+
+Recall is still namespaced per scraper identity, so one scraper's responses
+never leak into another's — but everything feeds the same shared knowledge
+for `ask()`.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Instant Recall" icon="bolt">
+    Known requests skip the HTTP round-trip entirely — data returns from
+    memory instead
+  </Card>
+  <Card title="Auto-Learning" icon="brain">
+    Every successful scrape teaches the brain automatically, and learning is
+    always free
+  </Card>
+  <Card title="Ask Anything" icon="messages">
+    Natural-language questions over everything learned, via `client.ask()`
+  </Card>
+  <Card title="Graceful Degradation" icon="shield-check">
+    A circuit breaker means a FetchBrain outage never fails your crawl —
+    worst case, you lose optimization for a while
+  </Card>
+  <Card title="Request Batching" icon="layer-group">
+    Concurrent requests are automatically batched into bulk API calls
+  </Card>
+  <Card title="Crawlee Compatible" icon="plug">
+    Works with CheerioCrawler, PlaywrightCrawler, PuppeteerCrawler, and more
+  </Card>
+</CardGroup>
+
+## Memory depth
+
+`memory` controls how far back the brain looks before deciding a request is
+known:
+
+| Depth      | Window  | Default | Use for                          |
+| ---------- | ------- | ------- | --------------------------------- |
+| `fresh`    | 1 hour  |         | prices, stock, anything volatile |
+| `recent`   | 24 hours| ✅      | daily crawl cycles               |
+| `standard` | 7 days  |         | listings, catalogs               |
+| `deep`     | 30 days |         | slow-changing reference data     |
+
+See [Memory Depth](/docs/sdk/memory-depth) for details.
+
+## Pricing model
 
 <Note>
-  **You only pay for what works.** Learning is always free - you only pay when
-  the AI successfully returns known data.
+  **You only pay for what works.** Learning is always free — you only pay
+  when the brain successfully returns a known request.
 </Note>
 
-| Plan               | Included Queries | Overage  |
-| ------------------ | ---------------- | -------- |
-| Free               | 5K               | -        |
-| Starter ($19/mo)   | 100K             | $0.05/1K |
-| Pro ($49/mo)       | 500K             | $0.05/1K |
-| Business ($149/mo) | 2M               | $0.05/1K |
-| Scale ($349/mo)    | 10M              | $0.05/1K |
+| Plan               | Included Recalls | Overage  |
+| ------------------ | ----------------- | -------- |
+| Free               | 5K                 | -        |
+| Starter ($19/mo)   | 100K               | $0.05/1K |
+| Pro ($49/mo)       | 500K               | $0.05/1K |
+| Business ($149/mo) | 2M                 | $0.05/1K |
+| Scale ($349/mo)    | 10M                | $0.05/1K |
 
 ## Next Steps
 
@@ -58,5 +128,8 @@ Your Scraper → FetchBrain SDK → AI knows? → YES → Return AI knowledge (s
   </Card>
   <Card title="API Reference" icon="code" href="/docs/api-reference/overview">
     Direct HTTP API for any language
+  </Card>
+  <Card title="Telemetry" icon="chart-line" href="/docs/advanced/telemetry">
+    Opt-in anonymized diagnostics
   </Card>
 </CardGroup>

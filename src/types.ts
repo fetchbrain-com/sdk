@@ -188,7 +188,7 @@ export interface Logger {
  * Telemetry configuration - opt-in data sharing for AI improvements
  */
 export interface TelemetryConfig {
-  /** Enable telemetry collection (default: false) */
+  /** Enable telemetry collection (default: false — opt in to join the access-intelligence network) */
   enabled: boolean;
 
   /** Share performance metrics: response times, retries, status codes */

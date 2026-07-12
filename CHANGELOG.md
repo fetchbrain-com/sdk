@@ -18,6 +18,10 @@ Use the migration table below to update your code.
 - `recall()` / `recallBulk()` replace `query()` / `queryBulk()`.
 - `context.brain.use()` replaces `context.ai.useAIData()`.
 - `stats()` returns `known` and `recallRate`.
+- Telemetry is **opt-in** and consistent across all client paths (a stray
+  default-on in the direct client is fixed). Enable `telemetry: { enabled:
+  true }` to join the anonymized access-intelligence network (proxy
+  recommendations, block early-warning); off otherwise.
 - Types renamed to match (`MemoryDepth`, `RecallResult`, `Recall*`);
   `confidence` and `AIMemoryDepth` removed.
 - HTTP endpoints are now `/v1/recall` and `/v1/ask` (old paths remain as

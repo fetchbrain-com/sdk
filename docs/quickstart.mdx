@@ -35,7 +35,7 @@ import { CheerioCrawler } from "crawlee";
 const crawler = FetchBrain.enhance(
   new CheerioCrawler({
     requestHandler: async ({ $, request, pushData }) => {
-      // This only runs when AI needs to "learn" (new page)
+      // This only runs when the brain needs to learn (unknown request)
       const data = {
         title: $("h1").text(),
         price: $(".price").text(),
@@ -46,7 +46,6 @@ const crawler = FetchBrain.enhance(
   {
     apiKey: process.env.FETCHBRAIN_API_KEY,
     memory: "recent",
-    learning: true,
   }
 );
 
@@ -61,9 +60,24 @@ FETCHBRAIN_API_KEY=fb_live_your_key npx ts-node scraper.ts
 
 That's it! 🎉 Your scraper now:
 
-- ✅ Queries AI before each request
-- ✅ Skips HTTP when AI knows the data
-- ✅ Automatically teaches AI new pages
+- ✅ Recalls known requests before each fetch
+- ✅ Skips HTTP when the brain already knows the data
+- ✅ Automatically teaches the brain on new requests, for free
+
+## Ask a question across everything learned
+
+Once a few runs have taught the brain, you can query across all of it —
+not just one request at a time:
+
+```typescript
+import { FetchBrainClient } from "@fetchbrain.com/sdk";
+
+const client = new FetchBrainClient({ apiKey: process.env.FETCHBRAIN_API_KEY });
+const res = await client.ask("which products are under $20?", { answer: true });
+
+console.log(res.answer);
+console.log(res.sources);
+```
 
 ## What's Next?
 

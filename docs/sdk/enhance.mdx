@@ -1,11 +1,11 @@
 ---
 title: FetchBrain.enhance
-description: "Wrap a Crawlee crawler with AI optimization"
+description: "Wrap a Crawlee crawler with a shared memory pool"
 ---
 
 ## Overview
 
-`FetchBrain.enhance()` wraps any Crawlee crawler with AI-powered optimization. Your crawler works exactly the same, but now queries the AI before each request.
+`FetchBrain.enhance()` wraps any Crawlee crawler with FetchBrain's memory. Your crawler works exactly the same, but now recalls known requests before each one runs.
 
 ## Basic Usage
 
@@ -37,10 +37,10 @@ interface FetchBrainConfig {
   // Optional
   baseUrl?: string; // API URL (default: production)
   memory?: MemoryDepth; // How far back the brain recalls (default: "recent")
-  learning?: boolean; // Enable AI learning (default: true)
+  learning?: boolean; // Enable auto-learning (default: true)
   alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
   refreshOnRebuild?: boolean; // Only reuse data from the same build (default: false)
-  timeout?: number; // Query timeout in ms (default: 500)
+  timeout?: number; // Recall timeout in ms (default: 500)
   debug?: boolean; // Enable debug logging (default: false)
 
   // Learning shaping
@@ -74,11 +74,11 @@ interface FetchBrainConfig {
 </ParamField>
 
 <ParamField body="learning" type="boolean" default="true">
-  Whether to teach the AI new pages after scraping
+  Whether to teach the brain new requests after scraping
 </ParamField>
 
 <ParamField body="alwaysRun" type="boolean | string | string[]" default="false">
-  Control which handlers run when AI knows the page
+  Control which handlers run when the brain already knows the request
 </ParamField>
 
 <ParamField body="refreshOnRebuild" type="boolean" default="false">
@@ -88,7 +88,7 @@ interface FetchBrainConfig {
 </ParamField>
 
 <ParamField body="timeout" type="number" default="500">
-  Timeout in milliseconds for AI queries
+  Timeout in milliseconds for recall requests
 </ParamField>
 
 <ParamField body="debug" type="boolean" default="false">
@@ -96,7 +96,7 @@ interface FetchBrainConfig {
 </ParamField>
 
 <ParamField body="extractForLearning" type="(data) => object">
-  Transform scraped data before it is taught to the AI (e.g. strip large or
+  Transform scraped data before it is taught to the brain (e.g. strip large or
   volatile fields).
 </ParamField>
 
@@ -116,8 +116,9 @@ interface FetchBrainConfig {
 </ParamField>
 
 <ParamField body="telemetry" type="object">
-  Opt-in anonymous telemetry (`{ enabled: true }`). No PII, URLs, or credentials
-  are ever sent.
+  Opt-in anonymized telemetry (`{ enabled: true }`), off by default. No raw
+  URLs, bodies, cookies, IPs, or PII are ever sent. See
+  [Telemetry](/docs/advanced/telemetry).
 </ParamField>
 
 ## Supported Crawlers
@@ -135,11 +136,16 @@ interface FetchBrainConfig {
 When you call `crawler.run(urls)`:
 
 1. SDK intercepts each request before it's made
-2. Queries AI: "Do you know this URL?"
-3. **If AI knows**: Returns known data, skips HTTP request
-4. **If AI doesn't know**: Runs your handler, then teaches the AI
+2. Recalls: "Does the brain know this request?"
+3. **If known**: Returns the remembered data, skips the HTTP request
+4. **If unknown**: Runs your handler, then teaches the brain
 
 ```
-Request → AI Query → Known? → Skip HTTP → Return AI Data
-                   → Unknown? → Run Handler → Teach AI
+Request → Recall → Known? → Skip HTTP → Return remembered data
+                 → Unknown? → Run Handler → Brain learns
 ```
+
+<Tip>
+  Want to search across everything the brain has learned instead of one
+  request at a time? See [`client.ask()`](/docs/sdk/manual-api#asking-questions).
+</Tip>

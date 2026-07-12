@@ -5,15 +5,15 @@ description: "Circuit breaker ensures your scraper never fails"
 
 ## Overview
 
-FetchBrain includes a built-in circuit breaker that ensures your scraper continues even if the AI API is unavailable.
+FetchBrain includes a built-in circuit breaker that ensures your scraper continues even if the FetchBrain API is unavailable.
 
 ## How It Works
 
 ```
-API Healthy     → Normal operation with AI optimization
-API Slow (>500ms) → Timeout, continue without AI
-API Down        → Circuit opens, scraper runs standalone
-API Recovers    → Circuit closes, AI optimization resumes
+API Healthy       → Normal operation, recall/learn active
+API Slow (>500ms) → Timeout, continue without recall
+API Down          → Circuit opens, scraper runs standalone
+API Recovers      → Circuit closes, recall/learn resume
 ```
 
 <Note>
@@ -25,8 +25,8 @@ API Recovers    → Circuit closes, AI optimization resumes
 
 | State         | Behavior                                         |
 | ------------- | ------------------------------------------------ |
-| **Closed**    | Normal operation, all requests go through AI     |
-| **Open**      | Circuit tripped, bypass AI, run scraper directly |
+| **Closed**    | Normal operation, all requests go through recall |
+| **Open**      | Circuit tripped, bypass recall, run scraper directly |
 | **Half-Open** | Testing if API recovered, partial requests       |
 
 ## Timeout Configuration
@@ -38,9 +38,9 @@ const crawler = FetchBrain.enhance(crawler, {
 });
 ```
 
-If the AI doesn't respond within the timeout, the SDK:
+If FetchBrain doesn't respond within the timeout, the SDK:
 
-1. Skips the AI query for this request
+1. Skips the recall for this request
 2. Runs your handler normally
 3. Increments the failure counter
 
@@ -77,14 +77,14 @@ const crawler = FetchBrain.enhance(crawler, {
 });
 
 // Logs:
-// [FetchBrain] Circuit OPEN - bypassing AI
+// [FetchBrain] Circuit OPEN - bypassing recall
 // [FetchBrain] Circuit HALF-OPEN - testing...
-// [FetchBrain] Circuit CLOSED - AI online
+// [FetchBrain] Circuit CLOSED - recall online
 ```
 
 ## Best Practices
 
 1. **Always set a timeout** - The default 500ms is good for most cases
-2. **Use learning mode** - Even when circuit is open, pages are queued for learning
+2. **Use learning mode** - Even when circuit is open, requests are queued for learning
 3. **Monitor stats** - Check `stats()` for recall rates
 4. **Log errors** - Enable debug mode in staging to catch issues early

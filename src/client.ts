@@ -95,7 +95,7 @@ export class FetchBrainClient {
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,
       learnUrlField: config.learnUrlField,
-      telemetry: config.telemetry ?? { enabled: true },
+      telemetry: config.telemetry ?? { enabled: false }, // opt-in
       batch: config.batch,
       circuitBreaker: config.circuitBreaker,
     };

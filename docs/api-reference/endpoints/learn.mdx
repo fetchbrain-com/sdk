@@ -1,6 +1,6 @@
 ---
 title: Learn Endpoint
-description: "Teach the AI about one or more requests"
+description: "Teach the brain about one or more requests"
 openapi: "POST /v1/learn"
 ---
 
@@ -11,7 +11,7 @@ POST https://api.fetchbrain.com/v1/learn
 ```
 
 <Note>
-  **Learning is always free.** You only pay when the AI successfully returns
+  **Learning is always free.** You only pay when the brain successfully returns
   known data via the [Recall endpoint](/docs/api-reference/endpoints/recall).
 </Note>
 
@@ -61,7 +61,7 @@ each is stored separately. When `uniqueKey` is omitted it defaults to the URL.
 </ParamField>
 
 <ParamField body="entries[].data" type="object" required>
-  The scraped data to teach the AI. Maximum **100 KB** per entry.
+  The scraped data to teach the brain. Maximum **100 KB** per entry.
 </ParamField>
 
 ## Response
