@@ -66,6 +66,20 @@ jobs:
           fi
           echo "✅ Version match: $PACKAGE_VERSION"
 
+      - name: Verify production API has the endpoints this SDK calls
+        if: startsWith(github.ref, 'refs/tags/v') && github.event.inputs.dry_run != 'true'
+        run: |
+          API_URL="https://api.fetchbrain.com"
+          echo "Checking $API_URL for /v1/recall and /v1/ask before publishing..."
+          recall=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$API_URL/v1/recall" -H "Content-Type: application/json" -d '{}' || echo 000)
+          ask=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 -X POST "$API_URL/v1/ask" -H "Content-Type: application/json" -d '{}' || echo 000)
+          # 401/400 = route exists (auth/validation); 404 = endpoint not deployed yet.
+          if [ "$recall" = "404" ] || [ "$ask" = "404" ] || [ "$recall" = "000" ] || [ "$ask" = "000" ]; then
+            echo "::error::Production API is missing endpoints this SDK requires (recall=$recall ask=$ask). Deploy the API first — publishing now would ship an SDK that 404s for every user."
+            exit 1
+          fi
+          echo "✅ Production API supports /v1/recall ($recall) and /v1/ask ($ask)"
+
       - name: Determine npm tag
         id: npm_tag
         run: |
