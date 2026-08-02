@@ -284,12 +284,19 @@ export class FetchBrainClient {
       data: this.config.extractForLearning ? this.config.extractForLearning(e.data) : e.data,
     }));
 
+    const request: LearnRequest = { entries: processed };
+
+    const platformBuildId = getPlatformBuildId();
+    if (this.config.refreshOnRebuild && platformBuildId) {
+      request.build = platformBuildId;
+    }
+
     try {
       const response = await this.makeRequest<LearnResponse>(
         "/v1/learn",
         {
           method: "POST",
-          body: JSON.stringify({ entries: processed } satisfies LearnRequest),
+          body: JSON.stringify(request),
         },
         DEFAULT_LEARN_TIMEOUT,
       );

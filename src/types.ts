@@ -36,8 +36,11 @@ export interface FetchBrainConfig {
   extractForLearning?: (data: unknown) => Record<string, unknown>;
 
   /**
-   * If true, only return known data from the same build version.
-   * When a scraper updates, it will re-scrape instead of using stale data.
+   * If true, scope both learn and recall to the current build version.
+   * Recall only returns known data from the same build; learn stores new
+   * data tagged with it. When a scraper updates, it will re-scrape instead
+   * of using stale data, and freshly learned data won't be masked by an
+   * older build's memory.
    * Uses the platform's native build identifier, auto-detected from the environment.
    * Default: false
    */
@@ -106,6 +109,7 @@ export interface RecallResponse {
 /** Learn request to the API */
 export interface LearnRequest {
   entries: { request: RawRequest; data: Record<string, unknown> }[];
+  build?: string;
 }
 
 /** Learn response from the API */
