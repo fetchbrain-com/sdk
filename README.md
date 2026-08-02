@@ -42,6 +42,26 @@ $ node scraper.js                      # every run after that
   🧠 Finished! recalled: 3/3 (100%), learned: 0, duration: 0.3s
 ```
 
+### Try it in 60 seconds
+
+```ts
+// scraper.mjs — run this twice and watch the second run skip the fetch
+import { CheerioCrawler } from "crawlee";
+import { FetchBrain } from "@fetchbrain.com/sdk";
+
+const crawler = new CheerioCrawler({
+  async requestHandler({ request, $, pushData }) {
+    await pushData({ url: request.url, title: $("title").text() });
+  },
+});
+
+FetchBrain.enhance(crawler, { apiKey: process.env.FETCHBRAIN_API_KEY });
+
+await crawler.run(["https://example.com/"]);
+// Run 1:  ● learned   example.com/          — your scraper fetched it and taught your brain
+// Run 2:  ● known     example.com/   ~50ms  — recalled from memory, no HTTP request made
+```
+
 ## One line to adopt
 
 FetchBrain wraps your existing [Crawlee](https://crawlee.dev) crawler — no

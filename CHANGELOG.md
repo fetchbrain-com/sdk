@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-02
+
+- `refreshOnRebuild` now scopes learn, recall, and ask symmetrically. Previously, a platform
+  build id (e.g. on CI) could scope stored memory while recall (and ask) read build-agnostic
+  memory, causing permanent unknowns. Default behavior: memory persists across rebuilds.
+- If you set `refreshOnRebuild: true`, update to this version — v0.3.0 opt-in
+  scoping does not round-trip against the current API.
+
 ## [0.3.0] - 2026-07-11
 
 Breaking release: the public API is renamed to one consistent taxonomy.
