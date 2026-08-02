@@ -201,16 +201,28 @@ export class FetchBrainClient {
       return { sources: [], status: "unavailable" };
     }
 
+    const askBody: {
+      query: string;
+      answer?: boolean;
+      limit?: number;
+      build?: string;
+    } = {
+      query: question,
+      answer: opts?.answer,
+      limit: opts?.limit,
+    };
+
+    const platformBuildId = getPlatformBuildId();
+    if (this.config.refreshOnRebuild && platformBuildId) {
+      askBody.build = platformBuildId;
+    }
+
     try {
       const response = await this.makeRequest<AskResponse>(
         "/v1/ask",
         {
           method: "POST",
-          body: JSON.stringify({
-            query: question,
-            answer: opts?.answer,
-            limit: opts?.limit,
-          }),
+          body: JSON.stringify(askBody),
         },
         ASK_TIMEOUT,
       );

@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.1] - 2026-08-02
 
-- `refreshOnRebuild` now scopes learn and recall symmetrically. Previously, a platform
-  build id (e.g. on CI) could scope stored memory while recall read build-agnostic
+- `refreshOnRebuild` now scopes learn, recall, and ask symmetrically. Previously, a platform
+  build id (e.g. on CI) could scope stored memory while recall (and ask) read build-agnostic
   memory, causing permanent unknowns. Default behavior: memory persists across rebuilds.
 - If you set `refreshOnRebuild: true`, update to this version — v0.3.0 opt-in
   scoping does not round-trip against the current API.

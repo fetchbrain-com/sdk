@@ -59,3 +59,59 @@ describe("learn build transmission", () => {
     expect(body.build).toBeUndefined();
   });
 });
+
+describe("ask build transmission", () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ sources: [], status: "ok" }), {
+          status: 200,
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("includes build on ask when refreshOnRebuild is true", async () => {
+    vi.stubEnv("CUSTOM_BUILD_ID", "b42");
+    const client = new FetchBrainClient({
+      apiKey: "fb_test_x",
+      refreshOnRebuild: true,
+    });
+    await client.ask("what changed?");
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/v1/ask"))!;
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.build).toBe("b42");
+  });
+
+  it("omits build on ask by default", async () => {
+    vi.stubEnv("CUSTOM_BUILD_ID", "b42");
+    const client = new FetchBrainClient({
+      apiKey: "fb_test_x",
+    });
+    await client.ask("what changed?");
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/v1/ask"))!;
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.build).toBeUndefined();
+  });
+
+  it("omits build on ask when refreshOnRebuild is true but no platform build id is set", async () => {
+    const client = new FetchBrainClient({
+      apiKey: "fb_test_x",
+      refreshOnRebuild: true,
+    });
+    await client.ask("what changed?");
+
+    const call = fetchMock.mock.calls.find((c) => String(c[0]).endsWith("/v1/ask"))!;
+    const body = JSON.parse((call[1] as RequestInit).body as string);
+    expect(body.build).toBeUndefined();
+  });
+});
