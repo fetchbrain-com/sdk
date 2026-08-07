@@ -162,7 +162,13 @@ export class MockFetchBrain {
         ? `Based on ${sources.length} remembered page${sources.length === 1 ? "" : "s"}: ${JSON.stringify(sources[0].data)}`
         : "Nothing remembered yet for that question.";
 
-    return { sources, status: "ok", answer };
+    // Echo the requested model slug like the real API reports what it used.
+    return {
+      sources,
+      status: "ok",
+      answer,
+      model: opts?.model ?? "llama-3.3-70b",
+    };
   }
 
   /**

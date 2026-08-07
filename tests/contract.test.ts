@@ -101,9 +101,45 @@ describe("ask wire contract", () => {
     expect(res).toEqual({ sources: [], status: "unavailable" });
   });
 
-  it("degrades to unavailable on a 4xx WITHOUT tripping the circuit breaker", async () => {
+  it("forwards model in the ask body, and omits it when unset", async () => {
     const client = new FetchBrainClient({ apiKey: "fb_test_123" });
-    fetchMock.mockResolvedValue(
+    await client.ask("blue widgets", { answer: true, model: "kimi-k2.5" });
+    const withModel = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string,
+    );
+    expect(withModel.model).toBe("kimi-k2.5");
+
+    await client.ask("blue widgets", { answer: true });
+    const withoutModel = JSON.parse(
+      (fetchMock.mock.calls[1][1] as RequestInit).body as string,
+    );
+    expect("model" in withoutModel).toBe(false);
+  });
+
+  it("returns the model the server reports it actually used", async () => {
+    const client = new FetchBrainClient({ apiKey: "fb_test_123" });
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          sources: [],
+          status: "ok",
+          answer: "…",
+          model: "llama-3.3-70b",
+        }),
+        { status: 200 },
+      ),
+    );
+    const res = await client.ask("blue widgets", {
+      answer: true,
+      model: "kimi-k2.5",
+    });
+    expect(res.model).toBe("llama-3.3-70b");
+  });
+
+  it("surfaces a 4xx as rejected (with the server's error) WITHOUT tripping the circuit breaker", async () => {
+    const client = new FetchBrainClient({ apiKey: "fb_test_123" });
+    // Fresh Response per call — a body can only be consumed once.
+    fetchMock.mockImplementation(async () =>
       new Response(JSON.stringify({ error: "INDEXING_DISABLED" }), {
         status: 403,
         statusText: "Forbidden",
@@ -113,7 +149,11 @@ describe("ask wire contract", () => {
     // Well above the default failureThreshold (3) — a 4xx must never count.
     for (let i = 0; i < 5; i++) {
       const res = await client.ask("anything");
-      expect(res).toEqual({ sources: [], status: "unavailable" });
+      expect(res).toEqual({
+        sources: [],
+        status: "rejected",
+        error: "INDEXING_DISABLED",
+      });
     }
 
     expect(client.getCircuitState()).toMatchObject({

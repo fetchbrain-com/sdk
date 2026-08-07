@@ -140,7 +140,14 @@ export interface RecallResult {
 export interface AskResponse {
   sources: { score: number; url?: string; data: unknown }[];
   answer?: string;
-  status: "ok" | "unavailable";
+  /**
+   * "ok" — answered; "rejected" — the API refused this request (bad input,
+   * unknown model slug, byok not linked — see `error`); "unavailable" — the
+   * API is degraded or unreachable.
+   */
+  status: "ok" | "unavailable" | "rejected";
+  /** Why the request was rejected (only when status is "rejected"). */
+  error?: string;
   /** Slug of the generation model actually used (answer mode; reveals fallbacks). */
   model?: string;
 }
