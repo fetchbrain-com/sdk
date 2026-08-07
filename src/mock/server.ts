@@ -106,7 +106,12 @@ app.post("/v1/query", handleRecall); // deprecated alias
  * for callers to test against.
  */
 app.post("/v1/ask", (req, res) => {
-  const body = req.body as { query?: unknown; limit?: unknown; answer?: unknown };
+  const body = req.body as {
+    query?: unknown;
+    limit?: unknown;
+    answer?: unknown;
+    model?: unknown;
+  };
   const query = body.query;
 
   if (typeof query !== "string" || query.trim() === "") {
@@ -138,6 +143,8 @@ app.post("/v1/ask", (req, res) => {
       sources.length > 0
         ? `Based on ${sources.length} remembered page${sources.length === 1 ? "" : "s"}: ${JSON.stringify(sources[0].data)}`
         : "Nothing remembered yet for that question.";
+    // Echo the requested model slug like the real API reports what it used.
+    response.model = typeof body.model === "string" ? body.model : "llama-3.3-70b";
   }
 
   res.json(response);

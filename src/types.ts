@@ -141,6 +141,8 @@ export interface AskResponse {
   sources: { score: number; url?: string; data: unknown }[];
   answer?: string;
   status: "ok" | "unavailable";
+  /** Slug of the generation model actually used (answer mode; reveals fallbacks). */
+  model?: string;
 }
 
 /** Circuit breaker states */

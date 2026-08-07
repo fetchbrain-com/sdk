@@ -242,6 +242,22 @@ console.log(res.answer);   // synthesized answer
 console.log(res.sources);  // scored sources
 ```
 
+Pick the model that writes the answer with `model` — the default is Llama 3.3
+70B; premium models (e.g. `"kimi-k2.5"`, `"kimi-k2.6"`) use extra ask credits
+and need a paid plan, and `"byok"` answers with your own linked provider model
+(configured in the dashboard, billed to your provider):
+
+```typescript
+const res = await client.ask("blue widgets under $50", {
+  answer: true,
+  model: "kimi-k2.5",
+});
+console.log(res.model); // slug actually used (reveals fallbacks)
+```
+
+Every plan includes a monthly ask allowance (100 free → 60,000 on Scale);
+asks never consume your recall quota.
+
 ## Brain Context in Handler
 
 Access brain data directly in your handler via `context.brain`:

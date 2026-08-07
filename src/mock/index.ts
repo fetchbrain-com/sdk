@@ -137,7 +137,7 @@ export class MockFetchBrain {
    */
   async ask(
     query: string,
-    opts?: { answer?: boolean; limit?: number },
+    opts?: { answer?: boolean; limit?: number; model?: string },
   ): Promise<AskResponse> {
     const cap = Math.min(Math.max(1, opts?.limit ?? 10), 20);
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);

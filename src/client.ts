@@ -192,10 +192,15 @@ export class FetchBrainClient {
 
   /**
    * Ask a natural-language question against learned knowledge
+   *
+   * `model` picks the generation model for answer mode from the server's
+   * menu (e.g. "llama-3.3-70b", "kimi-k2.5" — premium models cost extra ask
+   * credits), or "byok" to answer with your own linked provider model.
+   * Omit it for the default model.
    */
   async ask(
     question: string,
-    opts?: { answer?: boolean; limit?: number },
+    opts?: { answer?: boolean; limit?: number; model?: string },
   ): Promise<AskResponse> {
     if (this.circuitBreaker.isOpen()) {
       return { sources: [], status: "unavailable" };
@@ -206,10 +211,12 @@ export class FetchBrainClient {
       answer?: boolean;
       limit?: number;
       build?: string;
+      model?: string;
     } = {
       query: question,
       answer: opts?.answer,
       limit: opts?.limit,
+      model: opts?.model,
     };
 
     const platformBuildId = getPlatformBuildId();
