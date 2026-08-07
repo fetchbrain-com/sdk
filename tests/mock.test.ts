@@ -138,6 +138,30 @@ describe('MockFetchBrain', () => {
       const res = await brain.ask("blue widget");
       expect(res.answer).toBeUndefined();
     });
+
+    it('echoes the requested model in answer mode, like the real API', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1", { title: "Blue Widget" });
+      const res = await brain.ask("blue widget", {
+        answer: true,
+        model: "kimi-k2.5",
+      });
+      expect(res.model).toBe("kimi-k2.5");
+    });
+
+    it('reports the default model in answer mode when none is requested', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1", { title: "Blue Widget" });
+      const res = await brain.ask("blue widget", { answer: true });
+      expect(res.model).toBe("llama-3.3-70b");
+    });
+
+    it('omits model outside answer mode', async () => {
+      const brain = new MockFetchBrain();
+      await brain.seed("https://x.com/p1", { title: "Blue Widget" });
+      const res = await brain.ask("blue widget", { model: "kimi-k2.5" });
+      expect(res.model).toBeUndefined();
+    });
   });
 
   describe('clear', () => {

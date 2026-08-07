@@ -33,6 +33,8 @@ class ApiError extends Error {
   constructor(
     public readonly status: number,
     statusText: string,
+    /** Machine-readable `error` code from the API's response body, if any. */
+    public readonly serverError?: string,
   ) {
     super(`API error: ${status} ${statusText}`);
     this.name = "ApiError";
@@ -192,10 +194,15 @@ export class FetchBrainClient {
 
   /**
    * Ask a natural-language question against learned knowledge
+   *
+   * `model` picks the generation model for answer mode from the server's
+   * menu (e.g. "llama-3.3-70b", "kimi-k2.5" — premium models cost extra ask
+   * credits), or "byok" to answer with your own linked provider model.
+   * Omit it for the default model.
    */
   async ask(
     question: string,
-    opts?: { answer?: boolean; limit?: number },
+    opts?: { answer?: boolean; limit?: number; model?: string },
   ): Promise<AskResponse> {
     if (this.circuitBreaker.isOpen()) {
       return { sources: [], status: "unavailable" };
@@ -206,10 +213,12 @@ export class FetchBrainClient {
       answer?: boolean;
       limit?: number;
       build?: string;
+      model?: string;
     } = {
       query: question,
       answer: opts?.answer,
       limit: opts?.limit,
+      model: opts?.model,
     };
 
     const platformBuildId = getPlatformBuildId();
@@ -229,14 +238,19 @@ export class FetchBrainClient {
       this.circuitBreaker.recordSuccess();
       return response;
     } catch (error) {
-      // A 4xx means the request itself was rejected (bad input, indexing
-      // disabled, etc.) — that's not the API degrading, so don't trip the
-      // breaker for every scraper sharing this client over it.
-      const isClientError =
-        error instanceof ApiError && error.status >= 400 && error.status < 500;
-      if (!isClientError) {
-        this.circuitBreaker.recordFailure();
+      // A 4xx means the request itself was rejected (bad input, unknown
+      // model slug, byok not linked, etc.) — that's not the API degrading,
+      // so don't trip the breaker for every scraper sharing this client,
+      // and tell the caller why instead of masking it as an outage.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        this.logger.debug("Ask rejected:", error);
+        return {
+          sources: [],
+          status: "rejected",
+          error: error.serverError ?? error.message,
+        };
       }
+      this.circuitBreaker.recordFailure();
       this.logger.debug("Ask request failed:", error);
       return { sources: [], status: "unavailable" };
     }
@@ -376,7 +390,14 @@ export class FetchBrainClient {
       });
 
       if (!response.ok) {
-        throw new ApiError(response.status, response.statusText);
+        let serverError: string | undefined;
+        try {
+          const errBody = (await response.json()) as { error?: unknown };
+          if (typeof errBody.error === "string") serverError = errBody.error;
+        } catch {
+          // Non-JSON error body — no machine-readable code to carry.
+        }
+        throw new ApiError(response.status, response.statusText, serverError);
       }
 
       return (await response.json()) as T;
