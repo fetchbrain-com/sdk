@@ -187,6 +187,82 @@ describe("FetchBrain.enhance", () => {
       expect((__mockQuery as any).mock.calls[0][0]).toMatchObject({ url: "https://api.example.com/graphql", uniqueKey: "search:nike:page:1" });
     });
 
+    it("bypasses FetchBrain for skipLabels — no recall, no learn, no brain context, data still flows", async () => {
+      (__mockQuery as any).mockResolvedValue({ known: false });
+      const mockDataset = { pushData: vi.fn() };
+      // Handler exercises BOTH learn paths: the context.pushData interception and the
+      // standalone AsyncLocalStorage-based pushData export — neither may learn.
+      const handlerFn = vi.fn(async (ctx) => {
+        expect(ctx.brain).toBeUndefined();
+        await ctx.pushData({ title: "Search Results" });
+        await pushData({ title: "Standalone" }, mockDataset);
+      });
+      const crawler = {
+        requestHandler: handlerFn,
+        run: vi.fn(),
+        constructor: { name: "MockCrawler" },
+      };
+      const enhanced = FetchBrain.enhance(crawler, { ...testConfig, skipLabels: ["SEARCH"] });
+
+      const contextPushData = vi.fn();
+      await (enhanced as any).requestHandler({
+        request: { url: "https://api.example.com/search", label: "SEARCH" },
+        pushData: contextPushData,
+      });
+
+      expect(handlerFn).toHaveBeenCalledTimes(1);
+      expect(__mockQuery).not.toHaveBeenCalled();
+      expect(__mockLearn).not.toHaveBeenCalled();
+      // Handler ran untouched — data reached both destinations
+      expect(contextPushData).toHaveBeenCalledWith({ title: "Search Results" });
+      expect(mockDataset.pushData).toHaveBeenCalledWith({ title: "Standalone" });
+    });
+
+    it("bypasses unlabeled requests when skipLabels includes 'default'", async () => {
+      (__mockQuery as any).mockResolvedValue({ known: false });
+      const crawler = createMockCrawler();
+      const enhanced = FetchBrain.enhance(crawler, { ...testConfig, skipLabels: ["default"] });
+
+      await (enhanced as any).requestHandler({
+        request: { url: "https://api.example.com/unlabeled" },
+        pushData: vi.fn(),
+      });
+
+      expect(crawler._handler).toHaveBeenCalledTimes(1);
+      expect(__mockQuery).not.toHaveBeenCalled();
+    });
+
+    it("skipLabels wins when a label is also in alwaysRun", async () => {
+      (__mockQuery as any).mockResolvedValue({ known: true, data: { title: "Known" } });
+      const crawler = createMockCrawler();
+      const enhanced = FetchBrain.enhance(crawler, {
+        ...testConfig,
+        alwaysRun: ["SEARCH"],
+        skipLabels: ["SEARCH"],
+      });
+
+      await (enhanced as any).requestHandler({
+        request: { url: "https://api.example.com/search", label: "SEARCH" },
+        pushData: vi.fn(),
+      });
+
+      // Bypassed, not recalled-then-run
+      expect(crawler._handler).toHaveBeenCalledTimes(1);
+      expect(__mockQuery).not.toHaveBeenCalled();
+    });
+
+    it("still recalls for labels not in skipLabels", async () => {
+      (__mockQuery as any).mockResolvedValue({ known: false });
+      const enhanced = FetchBrain.enhance(createMockCrawler(), { ...testConfig, skipLabels: ["SEARCH"] });
+
+      await (enhanced as any).requestHandler({
+        request: { url: "https://api.example.com/product/1", label: "PRODUCT" },
+        pushData: vi.fn(),
+      });
+
+      expect(__mockQuery).toHaveBeenCalledTimes(1);
+    });
+
     it("should skip handler when AI knows and alwaysRun is false", async () => {
       (__mockQuery as any).mockResolvedValue({
         known: true,

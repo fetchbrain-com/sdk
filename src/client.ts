@@ -73,12 +73,12 @@ export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
     >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;

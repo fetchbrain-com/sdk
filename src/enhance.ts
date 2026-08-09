@@ -214,6 +214,7 @@ export class FetchBrain {
       aiSkipped: 0, // brain knew + skipped scraping
       learned: 0,
       scraped: 0, // Actually ran handler
+      bypassed: 0, // skipLabels match — ran handler outside FetchBrain
       startTime: 0,
     };
 
@@ -235,6 +236,9 @@ export class FetchBrain {
     // Per-crawl set to track urls already warned about default uniqueKey
     const warnedKeys = new Set<string>();
 
+    // Labels that bypass FetchBrain entirely (no recall/learn/brain).
+    const skipLabels = config.skipLabels && config.skipLabels.length ? new Set(config.skipLabels) : undefined;
+
     // Create wrapped handler
     const wrappedHandler = async (context: RequestHandlerContext) => {
       const { request } = context;
@@ -244,6 +248,16 @@ export class FetchBrain {
 
       // Track request
       runStats.totalRequests++;
+
+      // Bypass: this label opts out of FetchBrain — run the original handler live with no
+      // recall round-trip and no learn interception. Cheapest possible path for dynamic
+      // requests (search/pagination) whose data isn't worth remembering.
+      if (skipLabels && skipLabels.has(label || "default")) {
+        runStats.bypassed++;
+        logger.debug(`Bypassing FetchBrain for [${label || "default"}]: ${url}`);
+        await originalHandler.call(crawler, context);
+        return;
+      }
 
       // Set scrape context for API calls
       setScrapeContext({
@@ -462,14 +476,18 @@ export class FetchBrain {
           const duration = ((Date.now() - runStats.startTime) / 1000).toFixed(
             1,
           );
+          // Bypassed requests opted out of FetchBrain, so they don't dilute the savings rate
+          const managedRequests = runStats.totalRequests - runStats.bypassed;
           const savingsPercent =
-            runStats.totalRequests > 0
-              ? ((runStats.aiSkipped / runStats.totalRequests) * 100).toFixed(1)
+            managedRequests > 0
+              ? ((runStats.aiSkipped / managedRequests) * 100).toFixed(1)
               : "0";
 
           logger.info(
-            `🧠 Finished! recalled: ${runStats.recalled}/${runStats.totalRequests} (${savingsPercent}%), ` +
-              `learned: ${runStats.learned}, scraped: ${runStats.scraped}, duration: ${duration}s`,
+            `🧠 Finished! recalled: ${runStats.recalled}/${managedRequests} (${savingsPercent}%), ` +
+              `learned: ${runStats.learned}, scraped: ${runStats.scraped}` +
+              (skipLabels ? `, bypassed: ${runStats.bypassed}` : "") +
+              `, duration: ${duration}s`,
           );
         }
       };

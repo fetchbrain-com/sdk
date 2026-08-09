@@ -96,3 +96,11 @@ const crawler = FetchBrain.enhance(crawler, {
   alwaysRun: ["listing", "category", "search"],
 });
 ```
+
+<Note>
+  `alwaysRun` still recalls before every request and learns unknown results —
+  the brain stays in the loop. If a label's data isn't worth remembering at all
+  (search results, pagination), use
+  [`skipLabels`](/docs/sdk/skip-labels) instead to bypass FetchBrain entirely
+  and skip the recall round-trip too.
+</Note>

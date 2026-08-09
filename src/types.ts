@@ -32,6 +32,17 @@ export interface FetchBrainConfig {
    */
   alwaysRun?: boolean | string | string[];
 
+  /**
+   * Labels that bypass FetchBrain entirely — no recall round-trip, no learn, no brain context.
+   * Use for dynamic requests (search, listing, pagination) that must always run live and should
+   * never be remembered: unlike `alwaysRun` (which still recalls + can learn), these skip the
+   * recall network round-trip and the learn write altogether, removing per-request overhead for
+   * requests whose data is not worth remembering. Matches the request `label` (unlabeled = "default").
+   * A label listed in both `skipLabels` and `alwaysRun` is bypassed. Bypassed requests are also
+   * excluded from telemetry.
+   */
+  skipLabels?: string[];
+
   /** Custom data extractor for learning */
   extractForLearning?: (data: unknown) => Record<string, unknown>;
 
