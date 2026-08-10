@@ -55,6 +55,7 @@
         "docs/sdk/memory-depth",
         "docs/sdk/ai-context",
         "docs/sdk/always-run",
+        "docs/sdk/skip-labels",
         "docs/sdk/manual-api"
       ]
     },

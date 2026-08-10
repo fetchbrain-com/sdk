@@ -73,12 +73,12 @@ export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
     >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
@@ -100,6 +100,7 @@ export class FetchBrainClient {
       telemetry: config.telemetry ?? { enabled: false }, // opt-in
       batch: config.batch,
       circuitBreaker: config.circuitBreaker,
+      skipLabels: config.skipLabels, // enhance-only; stored so getConfig() round-trips
     };
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);

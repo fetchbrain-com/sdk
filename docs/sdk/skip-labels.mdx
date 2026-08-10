@@ -1,0 +1,63 @@
+---
+title: Skip Labels
+description: "Bypass FetchBrain entirely for requests that aren't worth remembering"
+---
+
+## Overview
+
+Some requests must always run live and produce data that isn't worth
+remembering — search results, pagination, infinite-scroll listings. For those,
+even the recall round-trip is pure overhead. The `skipLabels` option makes
+FetchBrain step out of the way entirely for matching labels: no recall, no
+learning, no `context.brain` — your handler runs at native speed.
+
+## Usage
+
+```typescript
+const crawler = FetchBrain.enhance(
+  new CheerioCrawler({ requestHandler: router }),
+  {
+    apiKey: process.env.FETCHBRAIN_API_KEY,
+    // Search and pagination always run live, outside FetchBrain
+    skipLabels: ["search", "pagination"],
+  }
+);
+```
+
+Matching is by the request `label`; unlabeled requests match `"default"`.
+
+## skipLabels vs alwaysRun
+
+Both make the handler run every time — the difference is whether the brain
+stays in the loop:
+
+|                             | `alwaysRun`  | `skipLabels` |
+| --------------------------- | ------------ | ------------ |
+| Handler runs                | always       | always       |
+| Recall round-trip           | yes          | no           |
+| `context.brain` available   | yes          | no           |
+| Learns unknown results      | yes          | no           |
+| Included in telemetry       | yes          | no           |
+
+Use [`alwaysRun`](/docs/sdk/always-run) when the request must run live but its
+result is still worth remembering (available to `ask()`, other scrapers, and
+future recalls). Use `skipLabels` when the data has no memory value at all and
+you just want the per-request overhead gone.
+
+<Note>
+  A label listed in both `skipLabels` and `alwaysRun` is bypassed —
+  `skipLabels` wins.
+</Note>
+
+## Run summary
+
+When `skipLabels` is configured, the end-of-run summary reports how many
+requests were bypassed, and excludes them from the recall-rate math (they never
+had a chance to be recalled):
+
+```
+🧠 Finished! recalled: 41/50 (82.0%), learned: 9, scraped: 9, bypassed: 23, duration: 12.4s
+```
+
+A `bypassed: 0` with `skipLabels` set means your labels aren't matching any
+requests — check the label spelling against your router.

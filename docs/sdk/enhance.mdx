@@ -39,6 +39,7 @@ interface FetchBrainConfig {
   memory?: MemoryDepth; // How far back the brain recalls (default: "recent")
   learning?: boolean; // Enable auto-learning (default: true)
   alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
+  skipLabels?: string[]; // Labels that bypass FetchBrain entirely (default: none)
   refreshOnRebuild?: boolean; // Only reuse data from the same build (default: false)
   timeout?: number; // Recall timeout in ms (default: 500)
   debug?: boolean; // Enable debug logging (default: false)
@@ -79,6 +80,13 @@ interface FetchBrainConfig {
 
 <ParamField body="alwaysRun" type="boolean | string | string[]" default="false">
   Control which handlers run when the brain already knows the request
+</ParamField>
+
+<ParamField body="skipLabels" type="string[]">
+  Labels that bypass FetchBrain entirely — no recall round-trip, no learning,
+  no `context.brain`. For dynamic requests (search, pagination) that must
+  always run live and aren't worth remembering. See
+  [Skip Labels](/docs/sdk/skip-labels).
 </ParamField>
 
 <ParamField body="refreshOnRebuild" type="boolean" default="false">

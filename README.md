@@ -214,6 +214,7 @@ interface FetchBrainConfig {
   memory?: MemoryDepth; // How far back the brain recalls
   learning?: boolean; // Enable AI learning (default: true)
   alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
+  skipLabels?: string[]; // Labels that bypass FetchBrain entirely (default: none)
   timeout?: number; // Request timeout in ms (default: 500)
   debug?: boolean; // Enable debug logging
 }
@@ -224,6 +225,15 @@ only specific labels when a request is known:
 
 ```typescript
 FetchBrain.enhance(crawler, { alwaysRun: ["listing", "category"] });
+```
+
+For dynamic requests that must always run live and aren't worth remembering
+(search results, pagination), use `skipLabels` instead: where `alwaysRun`
+still recalls (and can learn), `skipLabels` bypasses FetchBrain entirely —
+no recall round-trip, no learn — so those requests run at native speed:
+
+```typescript
+FetchBrain.enhance(crawler, { skipLabels: ["search", "pagination"] });
 ```
 
 ## Ask your brain anything
