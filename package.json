@@ -1,6 +1,6 @@
 {
   "name": "@fetchbrain.com/sdk",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "FetchBrain SDK — make your Crawlee scrapers smarter with every run; recall before you fetch, teach what you learn.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
