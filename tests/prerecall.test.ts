@@ -11,7 +11,7 @@
  * Like realistic-integration.test.ts, only global `fetch` is stubbed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { FetchBrain } from "../src/enhance";
+import { FetchBrain, MAX_STASH_ENTRIES } from "../src/enhance";
 import { FetchBrainClient } from "../src/client";
 import type { FetchBrainConfig, RecalledEvent } from "../src/types";
 
@@ -353,6 +353,82 @@ describe("handler with pre-recalled results", () => {
     expect(api.recallCalls()).toHaveLength(1);
     expect(pushed).toEqual([{ title: "one" }]);
     expect(originalHandler).not.toHaveBeenCalled();
+  });
+});
+
+describe("stash identity across Crawlee's uniqueKey normalization", () => {
+  it("consumes the stash when Crawlee computed a normalized uniqueKey after enqueue (no second recall)", async () => {
+    const api = createFakeApi(new Map([["https://site/p/1#reviews", { title: "one" }]]));
+    stubFetch(api.fetchImpl as any);
+
+    const originalHandler = vi.fn();
+    const { crawler, enqueued } = createFakeCrawler(originalHandler);
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+
+    // Enqueued as a plain {url} — no uniqueKey yet, stash keyed by the raw url.
+    await enhanced.addRequests([{ url: "https://site/p/1#reviews" }]);
+    expect(enqueued[0].skipNavigation).toBe(true);
+
+    // At Request construction Crawlee computes uniqueKey = normalizeUrl(url)
+    // (fragment stripped) — a DIFFERENT string than the raw url we stashed under.
+    const { context, pushed } = makeContext({
+      ...enqueued[0],
+      uniqueKey: "https://site/p/1",
+    });
+    await enhanced.requestHandler(context);
+
+    expect(pushed).toEqual([{ title: "one" }]);
+    expect(originalHandler).not.toHaveBeenCalled();
+    expect(api.recallCalls()).toHaveLength(1); // enqueue-time only — no double-billed fallback recall
+  });
+});
+
+describe("stash eviction cap", () => {
+  it("evicts the oldest entry beyond MAX_STASH_ENTRIES and degrades it to one handler-time recall", async () => {
+    const urls = Array.from({ length: MAX_STASH_ENTRIES + 1 }, (_, i) => `https://site/p/${i}`);
+    const api = createFakeApi(new Map(urls.map((u, i) => [u, { i }])));
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+
+    await enhanced.addRequests(urls);
+    const enqueueCalls = api.recallCalls().length; // ceil(5001/100) chunked bulk calls
+
+    // Entry 1 survived — served from the stash, no extra API call.
+    const survivor = makeContext(enqueued[1]);
+    await enhanced.requestHandler(survivor.context);
+    expect(survivor.pushed).toEqual([{ i: 1 }]);
+    expect(api.recallCalls()).toHaveLength(enqueueCalls);
+
+    // Entry 0 was evicted (oldest) — falls back to exactly one handler-time recall.
+    const evicted = makeContext(enqueued[0]);
+    await enhanced.requestHandler(evicted.context);
+    expect(evicted.pushed).toEqual([{ i: 0 }]);
+    expect(api.recallCalls()).toHaveLength(enqueueCalls + 1);
+  });
+});
+
+describe("run summary", () => {
+  it("counts expired-memory drops in the run summary", async () => {
+    const api = createFakeApi(new Map()); // brain no longer knows anything
+    stubFetch(api.fetchImpl as any);
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const { crawler } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+
+    const { context } = makeContext({
+      url: "https://site/p/1",
+      userData: { __fetchBrainResult: { known: true } },
+      skipNavigation: true,
+    });
+    await enhanced.requestHandler(context); // dropped: skipped fetch + expired memory
+    await enhanced.run();
+
+    const summary = infoSpy.mock.calls.map((c) => c.join(" ")).find((l) => l.includes("Finished!"));
+    expect(summary).toBeDefined();
+    expect(summary).toContain("dropped: 1");
   });
 });
 

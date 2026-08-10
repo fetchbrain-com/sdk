@@ -12,6 +12,7 @@ import type {
   TelemetryRequest,
   TelemetryResponse,
   RawRequest,
+  BatchConfig,
 } from "./types";
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
@@ -23,7 +24,16 @@ const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
 const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
 const BULK_RECALL_TIMEOUT = 3000; // Enqueue-time pre-recall is off the per-request hot path: favor reliability over fast-fail
 const MAX_BULK_ITEMS = 100; // API's MAX_ITEMS_PER_REQUEST — recallBulk chunks to stay under it
+const MAX_LEARN_ENTRIES = 50; // API's MAX_ENTRIES_PER_REQUEST for /v1/learn
 const ASK_TIMEOUT = 10000; // Ask hits the knowledge index; give it room like learn
+
+/** Clamp a user-configured batch size to an endpoint's per-request cap. */
+function clampBatch(
+  batch: Partial<BatchConfig> | undefined,
+  cap: number,
+): Partial<BatchConfig> | undefined {
+  return batch?.maxSize ? { ...batch, maxSize: Math.min(batch.maxSize, cap) } : batch;
+}
 
 /**
  * Thrown by makeRequest when the API responds with a non-2xx status.
@@ -114,15 +124,18 @@ export class FetchBrainClient {
       this.logger,
     );
 
+    // Each batcher's maxSize is clamped to its endpoint's per-request cap — an
+    // oversized flush 400s (recall degrades to fallback, learn is swallowed), so a
+    // large user-configured maxSize would silently zero the recall rate.
     this.batcher = new RequestBatcher(
       (items) => this.executeBatchQuery(items),
-      this.config.batch,
+      clampBatch(this.config.batch, MAX_BULK_ITEMS),
       this.logger,
     );
 
     this.learnBatcher = new LearnBatcher(
       (entries) => this.executeBatchLearn(entries),
-      this.config.batch,
+      clampBatch(this.config.batch, MAX_LEARN_ENTRIES),
       this.logger,
     );
   }

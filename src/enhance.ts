@@ -21,6 +21,10 @@ interface RequestContext {
 
 const STRIP_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
 const SDK_USERDATA_KEYS = new Set(["fetchBrainRecalled", "fetchBrainData", "__fetchBrainResult"]);
+// Cap on in-process pre-recalled payloads (see preRecalledData). Payloads are full
+// learned records, so the worst case is roughly cap × record size; oldest-first
+// eviction targets entries least likely to still execute.
+export const MAX_STASH_ENTRIES = 5000;
 
 /**
  * Snapshot the raw request the SDK forwards (credentials + SDK userData removed).
@@ -215,6 +219,7 @@ export class FetchBrain {
       learned: 0,
       scraped: 0, // Actually ran handler
       bypassed: 0, // skipLabels match — ran handler outside FetchBrain
+      dropped: 0, // enqueue-time fetch skipped, but remembered data gone by execution
       startTime: 0,
     };
 
@@ -240,12 +245,34 @@ export class FetchBrain {
     // full learned record stashed in userData would bloat every queue write and can hit
     // platform request-size limits. userData carries only a small {known} marker; if the
     // process restarts between enqueue and execution (map lost), the handler falls back
-    // to one batched recall. Entries are deleted on consumption so long crawls don't grow.
+    // to one batched recall. Entries are deleted on consumption; entries whose request
+    // never executes (e.g. a resumed persisted queue dedups it) are bounded by FIFO
+    // eviction at MAX_STASH_ENTRIES — an evicted entry degrades to handler-time recall.
     const preRecalledData = new Map<string, Record<string, unknown>>();
     // Identity key: `uniqueKey ?? url` folds Crawlee's GET default (uniqueKey = url), so
     // the enqueue-time key (often no explicit uniqueKey yet) matches the handler-time key.
     const stashKey = (r: { url: string; method?: string; uniqueKey?: string }) =>
       `${(r.method ?? "GET").toUpperCase()} ${r.uniqueKey ?? r.url}`;
+    const stashSet = (key: string, data: Record<string, unknown>) => {
+      if (preRecalledData.size >= MAX_STASH_ENTRIES) {
+        const oldest = preRecalledData.keys().next().value;
+        if (oldest !== undefined) preRecalledData.delete(oldest);
+      }
+      preRecalledData.set(key, data);
+    };
+    // Consume a stashed payload. Crawlee computes uniqueKey (a NORMALIZED url — host
+    // lowercased, fragment stripped) at Request construction, AFTER the enqueue-time
+    // stash was keyed by the raw url — so on a miss, retry under the raw-url identity.
+    const stashTake = (r: { url: string; method?: string; uniqueKey?: string }) => {
+      for (const key of [stashKey(r), `${(r.method ?? "GET").toUpperCase()} ${r.url}`]) {
+        const data = preRecalledData.get(key);
+        if (data) {
+          preRecalledData.delete(key); // consumed — keep the map from growing over long crawls
+          return data;
+        }
+      }
+      return undefined;
+    };
 
     // Labels that bypass FetchBrain entirely (no recall/learn/brain).
     const skipLabels = config.skipLabels && config.skipLabels.length ? new Set(config.skipLabels) : undefined;
@@ -292,10 +319,8 @@ export class FetchBrain {
           | undefined;
         let aiResult: RecallResult;
         if (preRecalled?.known) {
-          const key = stashKey(rawRequest);
-          const stashedData = preRecalledData.get(key);
+          const stashedData = stashTake(rawRequest);
           if (stashedData) {
-            preRecalledData.delete(key); // consumed — keep the map from growing over long crawls
             aiResult = { known: true, data: stashedData };
           } else {
             aiResult = await client.recall(rawRequest);
@@ -315,6 +340,7 @@ export class FetchBrain {
           (request as { skipNavigation?: boolean }).skipNavigation &&
           !(aiResult.known && aiResult.data)
         ) {
+          runStats.dropped++;
           logger.warn(
             `FetchBrain: ${url} skipped its fetch at enqueue time but its remembered data is no longer available — dropping this request (it will be re-scraped on a future run).`,
           );
@@ -550,6 +576,7 @@ export class FetchBrain {
             `🧠 Finished! recalled: ${runStats.recalled}/${managedRequests} (${savingsPercent}%), ` +
               `learned: ${runStats.learned}, scraped: ${runStats.scraped}` +
               (skipLabels ? `, bypassed: ${runStats.bypassed}` : "") +
+              (runStats.dropped ? `, dropped: ${runStats.dropped}` : "") +
               `, duration: ${duration}s`,
           );
         }
@@ -624,7 +651,7 @@ export class FetchBrain {
               if (result.known && result.data) {
                 // Marker in userData (persisted, tiny); payload in the in-process map.
                 r.userData = { ...r.userData, __fetchBrainResult: { known: true } };
-                preRecalledData.set(stashKey(rawRequests[j]), result.data);
+                stashSet(stashKey(rawRequests[j]), result.data);
                 if (!shouldRunHandler(config.alwaysRun, r.label)) {
                   r.skipNavigation = true; // Crawlee will never fetch this request
                   known++;
