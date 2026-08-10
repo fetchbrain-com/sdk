@@ -43,6 +43,41 @@ export interface FetchBrainConfig {
    */
   skipLabels?: string[];
 
+  /**
+   * Recall requests in bulk as they are enqueued (default: true).
+   *
+   * In HttpCrawler/CheerioCrawler the HTTP fetch happens BEFORE the request handler runs,
+   * so a recall inside the handler is too late to save the fetch. With preRecall the SDK
+   * wraps `crawler.addRequests()` (which `run(requests)` also goes through), recalls the
+   * whole batch in one API call, marks known requests with `skipNavigation` so Crawlee
+   * never fetches them, and stashes the result so the handler does no second recall.
+   *
+   * Scope: applies to ARRAY input passed to `crawler.addRequests()` / `run(requests)`.
+   * Crawlee's context-level `enqueueLinks()` and context `addRequests()` reach the queue
+   * via other paths and are not pre-recalled (they still get handler-time recall) — in a
+   * handler, enqueue follow-ups with `context.crawler.addRequests([...])` instead.
+   * Note recall usage is metered at enqueue time, so requests the queue later dedups
+   * still count as queries. The recall result is a snapshot as of enqueue: data learned
+   * between enqueue and execution is not picked up (the request is simply scraped and
+   * re-learned). If a request skipped its fetch but its remembered data expired before
+   * execution (e.g. across a process restart), it fails once without retries and lands
+   * in your `failedRequestHandler`; it will be re-scraped on a future run. A transient
+   * API outage during that restore is retried normally instead.
+   * On crawlers with `retryOnBlocked` the fetch is never skipped (Crawlee's blocked-check
+   * needs a response); recalled data still replaces the handler.
+   * Set to false to restore handler-time recall only.
+   */
+  preRecall?: boolean;
+
+  /**
+   * Called whenever recalled data is delivered in place of a live scrape — the handler
+   * was auto-skipped and the remembered data pushed, or your handler called
+   * `context.brain.use()`. Use it for per-record bookkeeping that normally lives in your
+   * handler — e.g. platform billing events. Errors are swallowed: a hook failure never
+   * breaks the crawl.
+   */
+  onRecalled?: (event: RecalledEvent) => void | Promise<void>;
+
   /** Custom data extractor for learning */
   extractForLearning?: (data: unknown) => Record<string, unknown>;
 
@@ -85,6 +120,14 @@ export interface FetchBrainConfig {
    * Default: disabled
    */
   telemetry?: TelemetryConfig;
+}
+
+/** Info passed to `onRecalled` when remembered data is delivered in place of a live scrape */
+export interface RecalledEvent {
+  url: string;
+  label?: string;
+  userData?: Record<string, unknown>;
+  data: Record<string, unknown>;
 }
 
 /** The raw request the SDK forwards; the API derives identity from a subset. */

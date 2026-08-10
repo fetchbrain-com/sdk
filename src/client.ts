@@ -12,6 +12,7 @@ import type {
   TelemetryRequest,
   TelemetryResponse,
   RawRequest,
+  BatchConfig,
 } from "./types";
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
@@ -21,7 +22,19 @@ import { buildNativeContext, getPlatformBuildId } from "./native-context";
 const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
 const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
+const BULK_RECALL_TIMEOUT = 3000; // Enqueue-time pre-recall is off the per-request hot path: favor reliability over fast-fail
+const MAX_BULK_ITEMS = 100; // API's MAX_ITEMS_PER_REQUEST — recallBulk chunks to stay under it
+const BULK_RECALL_CONCURRENCY = 5; // Chunks in flight at once — caps enqueue latency for huge seed lists without stampeding the API
+const MAX_LEARN_ENTRIES = 50; // API's MAX_ENTRIES_PER_REQUEST for /v1/learn
 const ASK_TIMEOUT = 10000; // Ask hits the knowledge index; give it room like learn
+
+/** Clamp a user-configured batch size to an endpoint's per-request cap. */
+function clampBatch(
+  batch: Partial<BatchConfig> | undefined,
+  cap: number,
+): Partial<BatchConfig> | undefined {
+  return batch?.maxSize ? { ...batch, maxSize: Math.min(batch.maxSize, cap) } : batch;
+}
 
 /**
  * Thrown by makeRequest when the API responds with a non-2xx status.
@@ -73,12 +86,12 @@ export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
     >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
@@ -101,6 +114,8 @@ export class FetchBrainClient {
       batch: config.batch,
       circuitBreaker: config.circuitBreaker,
       skipLabels: config.skipLabels, // enhance-only; stored so getConfig() round-trips
+      preRecall: config.preRecall, // enhance-only; stored so getConfig() round-trips
+      onRecalled: config.onRecalled, // enhance-only; stored so getConfig() round-trips
     };
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);
@@ -110,15 +125,18 @@ export class FetchBrainClient {
       this.logger,
     );
 
+    // Each batcher's maxSize is clamped to its endpoint's per-request cap — an
+    // oversized flush 400s (recall degrades to fallback, learn is swallowed), so a
+    // large user-configured maxSize would silently zero the recall rate.
     this.batcher = new RequestBatcher(
       (items) => this.executeBatchQuery(items),
-      this.config.batch,
+      clampBatch(this.config.batch, MAX_BULK_ITEMS),
       this.logger,
     );
 
     this.learnBatcher = new LearnBatcher(
       (entries) => this.executeBatchLearn(entries),
-      this.config.batch,
+      clampBatch(this.config.batch, MAX_LEARN_ENTRIES),
       this.logger,
     );
   }
@@ -139,19 +157,38 @@ export class FetchBrainClient {
   }
 
   /**
-   * Recall multiple requests at once — returns ordered array matching input order
+   * Recall multiple requests at once — returns ordered array matching input order.
+   * Chunks to the API's 100-item cap and runs chunks with bounded concurrency; a
+   * failed chunk degrades to fallback results for its own items only.
    */
   async recallBulk(requests: RawRequest[]): Promise<RecallResult[]> {
-    if (this.circuitBreaker.isOpen()) {
-      return requests.map(() => ({ known: false, fallback: true }));
+    const chunks: RawRequest[][] = [];
+    for (let start = 0; start < requests.length; start += MAX_BULK_ITEMS) {
+      chunks.push(requests.slice(start, start + MAX_BULK_ITEMS));
     }
-    try {
-      const items = requests.map((request, i) => ({ ref: String(i), request }));
-      const results = await this.executeBatchQuery(items);
-      return items.map((i) => results.get(i.ref) ?? { known: false });
-    } catch {
-      return requests.map(() => ({ known: false, fallback: true }));
-    }
+    const chunkResults: RecallResult[][] = new Array(chunks.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < chunks.length) {
+        const idx = next++;
+        const chunk = chunks[idx];
+        if (this.circuitBreaker.isOpen()) {
+          chunkResults[idx] = chunk.map(() => ({ known: false, fallback: true }));
+          continue;
+        }
+        try {
+          const items = chunk.map((request, i) => ({ ref: String(i), request }));
+          const resultMap = await this.executeBatchQuery(items, BULK_RECALL_TIMEOUT);
+          chunkResults[idx] = items.map((i) => resultMap.get(i.ref) ?? { known: false });
+        } catch {
+          chunkResults[idx] = chunk.map(() => ({ known: false, fallback: true }));
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(BULK_RECALL_CONCURRENCY, chunks.length) }, worker),
+    );
+    return chunkResults.flat();
   }
 
   /**
@@ -262,6 +299,7 @@ export class FetchBrainClient {
    */
   private async executeBatchQuery(
     items: { ref: string; request: RawRequest }[],
+    timeout?: number,
   ): Promise<Map<string, RecallResult>> {
     const results = new Map<string, RecallResult>();
 
@@ -276,10 +314,14 @@ export class FetchBrainClient {
     }
 
     try {
-      const response = await this.makeRequest<RecallResponse>("/v1/recall", {
-        method: "POST",
-        body: JSON.stringify(request),
-      });
+      const response = await this.makeRequest<RecallResponse>(
+        "/v1/recall",
+        {
+          method: "POST",
+          body: JSON.stringify(request),
+        },
+        timeout,
+      );
 
       this.circuitBreaker.recordSuccess();
 

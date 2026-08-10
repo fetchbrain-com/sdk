@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
-import type { FetchBrainConfig, Logger, RawRequest, TelemetryData } from "./types";
+import type { FetchBrainConfig, Logger, RawRequest, RecallResult, TelemetryData } from "./types";
 import {
   FetchBrainClient,
   setScrapeContext,
@@ -21,6 +21,10 @@ interface RequestContext {
 
 const STRIP_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
 const SDK_USERDATA_KEYS = new Set(["fetchBrainRecalled", "fetchBrainData", "__fetchBrainResult"]);
+// Cap on in-process pre-recalled payloads (see preRecalledData). Payloads are full
+// learned records, so the worst case is roughly cap × record size; oldest-first
+// eviction targets entries least likely to still execute.
+export const MAX_STASH_ENTRIES = 5000;
 
 /**
  * Snapshot the raw request the SDK forwards (credentials + SDK userData removed).
@@ -215,6 +219,7 @@ export class FetchBrain {
       learned: 0,
       scraped: 0, // Actually ran handler
       bypassed: 0, // skipLabels match — ran handler outside FetchBrain
+      dropped: 0, // enqueue-time fetch skipped, but remembered data gone by execution
       startTime: 0,
     };
 
@@ -235,6 +240,44 @@ export class FetchBrain {
 
     // Per-crawl set to track urls already warned about default uniqueKey
     const warnedKeys = new Set<string>();
+
+    // Pre-recalled payloads live here, NOT in the persisted request queue record — a
+    // full learned record stashed in userData would bloat every queue write and can hit
+    // platform request-size limits. userData carries only a small {known} marker; if the
+    // process restarts between enqueue and execution (map lost), the handler falls back
+    // to one batched recall. Entries are deleted on consumption; entries whose request
+    // never executes (e.g. a resumed persisted queue dedups it) are bounded by FIFO
+    // eviction at MAX_STASH_ENTRIES — an evicted entry degrades to handler-time recall.
+    const preRecalledData = new Map<string, Record<string, unknown>>();
+    // Identity key: `uniqueKey ?? url` folds Crawlee's GET default (uniqueKey = url), so
+    // the enqueue-time key (often no explicit uniqueKey yet) matches the handler-time key.
+    const stashKey = (r: { url: string; method?: string; uniqueKey?: string }) =>
+      `${(r.method ?? "GET").toUpperCase()} ${r.uniqueKey ?? r.url}`;
+    const stashSet = (key: string, data: Record<string, unknown>) => {
+      // Re-stashing an existing key must not evict an unrelated entry; delete+set
+      // also moves the key to the back of the FIFO (a re-enqueue is recent again).
+      if (!preRecalledData.delete(key) && preRecalledData.size >= MAX_STASH_ENTRIES) {
+        const oldest = preRecalledData.keys().next().value;
+        if (oldest !== undefined) preRecalledData.delete(oldest);
+      }
+      preRecalledData.set(key, data);
+    };
+    // Consume a stashed payload. Crawlee computes uniqueKey (a NORMALIZED url — host
+    // lowercased, fragment stripped) at Request construction, AFTER the enqueue-time
+    // stash was keyed by the raw url — so on a miss, retry under the raw-url identity.
+    // Assumes no request's explicit uniqueKey equals a DIFFERENT request's raw url
+    // (the fallback would consume the wrong entry); Crawlee's own dedup makes the
+    // same assumption.
+    const stashTake = (r: { url: string; method?: string; uniqueKey?: string }) => {
+      for (const key of [stashKey(r), `${(r.method ?? "GET").toUpperCase()} ${r.url}`]) {
+        const data = preRecalledData.get(key);
+        if (data) {
+          preRecalledData.delete(key); // consumed — keep the map from growing over long crawls
+          return data;
+        }
+      }
+      return undefined;
+    };
 
     // Labels that bypass FetchBrain entirely (no recall/learn/brain).
     const skipLabels = config.skipLabels && config.skipLabels.length ? new Set(config.skipLabels) : undefined;
@@ -270,13 +313,84 @@ export class FetchBrain {
       const rawRequest = buildRawRequest(request as Record<string, unknown>);
       warnDefaultUniqueKey(rawRequest, logger, warnedKeys);
 
+      // Consume-on-confirmed-delivery: if the handler fails after a stashed payload
+      // was read (dataset write error, handler timeout), the catch puts it back so a
+      // Crawlee retry serves it without a fallback recall.
+      let consumedStash: Record<string, unknown> | undefined;
+
       try {
-        // 1. Check if FetchBrain "knows" this URL
-        const aiResult = await client.recall(rawRequest);
+        // 1. Check if FetchBrain "knows" this URL. An enqueue-time pre-recall marker
+        // (stashed on userData by the addRequests wrapper) wins: no second recall
+        // round-trip, no double-billed query. A known marker carries no payload —
+        // the data waits in the in-process map; if the process restarted since
+        // enqueue (map empty), one batched recall restores it.
+        const preRecalled = request.userData?.__fetchBrainResult as
+          | RecallResult
+          | undefined;
+        let aiResult: RecallResult;
+        if (preRecalled?.known) {
+          const stashedData = stashTake(rawRequest);
+          if (stashedData) {
+            consumedStash = stashedData;
+            aiResult = { known: true, data: stashedData };
+          } else {
+            aiResult = await client.recall(rawRequest);
+          }
+        } else if (preRecalled) {
+          aiResult = preRecalled; // pre-checked and unknown — no second recall
+        } else {
+          aiResult = await client.recall(rawRequest);
+        }
+
+        // A request we marked skipNavigation at enqueue never fetched. If its
+        // remembered data is no longer available (memory expired across a process
+        // restart), running the original handler without a response would crash it.
+        // Fail the request instead — retrying is useless (the fetch already didn't
+        // happen), so noRetry routes it straight to failedRequestHandler where the
+        // missing record is visible, rather than reading as a silent success.
+        if (
+          preRecalled?.known &&
+          (request as { skipNavigation?: boolean }).skipNavigation &&
+          !(aiResult.known && aiResult.data)
+        ) {
+          // A fallback result means the API was unreachable, not that the memory
+          // expired — that's transient, so leave the request retryable: the next
+          // attempt recalls again and may restore the data. Only an authoritative
+          // "unknown" from a healthy API fails fast without retries.
+          if (aiResult.fallback) {
+            throw new Error(
+              `FetchBrain: ${url} skipped its fetch at enqueue time and its remembered data could not be restored (API unreachable) — retrying.`,
+            );
+          }
+          runStats.dropped++;
+          (request as { noRetry?: boolean }).noRetry = true;
+          throw new Error(
+            `FetchBrain: ${url} skipped its fetch at enqueue time but its remembered data is no longer available — failing without retries; it will be re-scraped on a future run.`,
+          );
+        }
 
         // Track if brain data was used (to skip learning)
         let usedAIData = false;
         const originalPushData = context.pushData;
+
+        // Per-record bookkeeping (e.g. platform billing) normally lives in the
+        // handler that recalled data replaces — this is its one hook. Never let it
+        // break the crawl. userData comes from the rawRequest snapshot: SDK
+        // bookkeeping keys already stripped, taken before enhance mutated
+        // request.userData.
+        const fireOnRecalled = async (data: Record<string, unknown>) => {
+          if (!config.onRecalled) return;
+          try {
+            await config.onRecalled({
+              url,
+              label: request.label,
+              userData: rawRequest.userData,
+              data,
+            });
+          } catch (hookErr) {
+            logger.debug(`onRecalled hook error: ${hookErr}`);
+          }
+        };
 
         // 2. Add brain context to handler - developers can check and decide
         context.brain = {
@@ -287,6 +401,7 @@ export class FetchBrain {
               usedAIData = true;
               await originalPushData.call(context, aiResult.data);
               logger.info(`Used brain data: ${url}`);
+              await fireOnRecalled(aiResult.data);
             }
           },
         };
@@ -310,6 +425,7 @@ export class FetchBrain {
           if (originalPushData) {
             await originalPushData.call(context, aiResult.data);
           }
+          await fireOnRecalled(aiResult.data);
           return;
         }
 
@@ -407,6 +523,12 @@ export class FetchBrain {
           }
         }
       } catch (err) {
+        // The handler failed after its stashed payload was consumed — put it back
+        // so a Crawlee retry is served from the stash instead of a fallback recall
+        // (which, if the API is also degraded, would discard available data).
+        if (consumedStash) {
+          stashSet(stashKey(rawRequest), consumedStash);
+        }
         // On error, still collect telemetry with error info
         if (telemetryConfig.enabled) {
           try {
@@ -487,9 +609,127 @@ export class FetchBrain {
             `🧠 Finished! recalled: ${runStats.recalled}/${managedRequests} (${savingsPercent}%), ` +
               `learned: ${runStats.learned}, scraped: ${runStats.scraped}` +
               (skipLabels ? `, bypassed: ${runStats.bypassed}` : "") +
+              (runStats.dropped ? `, dropped: ${runStats.dropped}` : "") +
               `, duration: ${duration}s`,
           );
         }
+      };
+    }
+
+    // Pre-recall at enqueue time (default on). In HttpCrawler/CheerioCrawler the HTTP
+    // fetch happens BEFORE the (wrapped) requestHandler runs, so a recall inside the
+    // handler is too late to save the fetch. Recalling the batch as it enters the queue
+    // lets known requests skip navigation entirely (request.skipNavigation) and removes
+    // the per-request recall round-trip for the rest. `run(startRequests)` funnels
+    // through addRequests, so wrapping it covers both entry points.
+    // Note: this covers ARRAY input to crawler.addRequests()/run(requests) only.
+    // Crawlee's context-level helpers (`enqueueLinks()`, the context `addRequests()`)
+    // feed the queue via generators/other paths and pass through un-recalled — inside
+    // a handler, enqueue follow-ups with `context.crawler.addRequests([...])` to get
+    // pre-recall (see README).
+    if (config.preRecall !== false && typeof crawlerAny.addRequests === "function") {
+      const originalAddRequests = crawlerAny.addRequests.bind(crawlerAny);
+      if (crawlerAny.retryOnBlocked) {
+        logger.info(
+          "preRecall: this crawler uses retryOnBlocked, whose blocked-check needs a fetched response — known requests will keep their fetch; recalled data still replaces the handler.",
+        );
+      }
+      crawlerAny.addRequests = async (requests: unknown, options?: unknown) => {
+        if (!Array.isArray(requests) || requests.length === 0) {
+          return originalAddRequests(requests, options);
+        }
+        // Crawlee's retryOnBlocked check (isRequestBlocked) reads the response
+        // contentType, which never exists for a skipNavigation request — combining
+        // them would crash every known request before the handler runs. Keep the
+        // marker + stash (no second recall, handler still auto-skipped) but let the
+        // fetch happen. Read per call: the flag lives on the crawler instance.
+        const retryOnBlocked = Boolean(
+          (crawlerAny as { retryOnBlocked?: boolean }).retryOnBlocked,
+        );
+        // Never mutate caller-owned inputs: a startRequests array reused for a second
+        // run (or shared between crawlers) must not carry this run's stash into the
+        // next. Strings are normalized, plain option objects shallow-cloned; Crawlee
+        // Request instances pass through as-is (cloning would drop their internal
+        // state) and are the one case annotated in place.
+        const batch: unknown[] = requests.map((r) => {
+          if (typeof r === "string") return { url: r };
+          if (r && typeof r === "object" && Object.getPrototypeOf(r) === Object.prototype) {
+            return { ...r };
+          }
+          return r;
+        });
+        try {
+          type EnqueuedRequest = {
+            url?: string;
+            method?: string;
+            uniqueKey?: string;
+            label?: string;
+            skipNavigation?: boolean;
+            userData?: Record<string, unknown>;
+          };
+          // Eligible: has a url, label not bypassed, not already skipNavigation (a
+          // request that intentionally skips navigation has its own handler logic —
+          // auto-pushing recalled data over it would be wrong), and an identity that
+          // is stable between enqueue and execution: for non-GET without an explicit
+          // uniqueKey, Crawlee computes an extended key at Request construction, so an
+          // enqueue-time recall would query the wrong identity — leave those to the
+          // handler-time recall, which sees the computed key.
+          const candidateIdx: number[] = [];
+          for (let i = 0; i < batch.length; i++) {
+            const r = batch[i] as EnqueuedRequest;
+            if (!r || typeof r.url !== "string") continue;
+            // A marker already in userData is OUR annotation from a previous
+            // enqueue/run (Request instances are annotated in place and may be
+            // reused) — not user intent. Strip it, and the skipNavigation we set
+            // alongside a known marker, so this enqueue re-decides from a fresh
+            // recall; if that yields no answer (API down), the safe state is a
+            // normal fetch — never a permanently poisoned, forever-dropped request.
+            const prior = r.userData?.__fetchBrainResult as { known?: boolean } | undefined;
+            if (prior) {
+              if (prior.known && r.skipNavigation) r.skipNavigation = false;
+              const rest = { ...(r.userData as Record<string, unknown>) };
+              delete rest.__fetchBrainResult;
+              r.userData = rest;
+            }
+            if (r.skipNavigation) continue;
+            if (skipLabels && skipLabels.has(r.label || "default")) continue;
+            if ((r.method ?? "GET").toUpperCase() !== "GET" && !r.uniqueKey) continue;
+            candidateIdx.push(i);
+          }
+          if (candidateIdx.length > 0) {
+            const rawRequests = candidateIdx.map((i) =>
+              buildRawRequest(batch[i] as Record<string, unknown>),
+            );
+            const results = await client.recallBulk(rawRequests);
+            let known = 0;
+            candidateIdx.forEach((reqIdx, j) => {
+              const result = results[j];
+              // On fallback (API degraded) stash nothing — the handler-time recall
+              // path stays as the retry.
+              if (!result || result.fallback) return;
+              const r = batch[reqIdx] as EnqueuedRequest;
+              if (result.known && result.data) {
+                // Marker in userData (persisted, tiny); payload in the in-process map.
+                r.userData = { ...r.userData, __fetchBrainResult: { known: true } };
+                stashSet(stashKey(rawRequests[j]), result.data);
+                if (!retryOnBlocked && !shouldRunHandler(config.alwaysRun, r.label)) {
+                  r.skipNavigation = true; // Crawlee will never fetch this request
+                  known++;
+                }
+              } else {
+                r.userData = { ...r.userData, __fetchBrainResult: { known: false } };
+              }
+            });
+            logger.debug(
+              `Pre-recalled ${candidateIdx.length} enqueued request(s): ${known} known (fetch skipped)`,
+            );
+          }
+        } catch (err) {
+          // Enqueueing must never fail because of FetchBrain — fall back to
+          // handler-time recall for this batch.
+          logger.debug(`Pre-recall failed, falling back to handler-time recall: ${err}`);
+        }
+        return originalAddRequests(batch, options);
       };
     }
 
