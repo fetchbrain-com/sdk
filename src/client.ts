@@ -24,6 +24,7 @@ const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
 const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
 const BULK_RECALL_TIMEOUT = 3000; // Enqueue-time pre-recall is off the per-request hot path: favor reliability over fast-fail
 const MAX_BULK_ITEMS = 100; // API's MAX_ITEMS_PER_REQUEST — recallBulk chunks to stay under it
+const BULK_RECALL_CONCURRENCY = 5; // Chunks in flight at once — caps enqueue latency for huge seed lists without stampeding the API
 const MAX_LEARN_ENTRIES = 50; // API's MAX_ENTRIES_PER_REQUEST for /v1/learn
 const ASK_TIMEOUT = 10000; // Ask hits the knowledge index; give it room like learn
 
@@ -157,26 +158,37 @@ export class FetchBrainClient {
 
   /**
    * Recall multiple requests at once — returns ordered array matching input order.
-   * Chunks to the API's 100-item cap; a failed chunk degrades to fallback results
-   * for its own items only.
+   * Chunks to the API's 100-item cap and runs chunks with bounded concurrency; a
+   * failed chunk degrades to fallback results for its own items only.
    */
   async recallBulk(requests: RawRequest[]): Promise<RecallResult[]> {
-    const results: RecallResult[] = [];
+    const chunks: RawRequest[][] = [];
     for (let start = 0; start < requests.length; start += MAX_BULK_ITEMS) {
-      const chunk = requests.slice(start, start + MAX_BULK_ITEMS);
-      if (this.circuitBreaker.isOpen()) {
-        results.push(...chunk.map(() => ({ known: false, fallback: true })));
-        continue;
-      }
-      try {
-        const items = chunk.map((request, i) => ({ ref: String(i), request }));
-        const chunkResults = await this.executeBatchQuery(items, BULK_RECALL_TIMEOUT);
-        results.push(...items.map((i) => chunkResults.get(i.ref) ?? { known: false }));
-      } catch {
-        results.push(...chunk.map(() => ({ known: false, fallback: true })));
-      }
+      chunks.push(requests.slice(start, start + MAX_BULK_ITEMS));
     }
-    return results;
+    const chunkResults: RecallResult[][] = new Array(chunks.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < chunks.length) {
+        const idx = next++;
+        const chunk = chunks[idx];
+        if (this.circuitBreaker.isOpen()) {
+          chunkResults[idx] = chunk.map(() => ({ known: false, fallback: true }));
+          continue;
+        }
+        try {
+          const items = chunk.map((request, i) => ({ ref: String(i), request }));
+          const resultMap = await this.executeBatchQuery(items, BULK_RECALL_TIMEOUT);
+          chunkResults[idx] = items.map((i) => resultMap.get(i.ref) ?? { known: false });
+        } catch {
+          chunkResults[idx] = chunk.map(() => ({ known: false, fallback: true }));
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(BULK_RECALL_CONCURRENCY, chunks.length) }, worker),
+    );
+    return chunkResults.flat();
   }
 
   /**

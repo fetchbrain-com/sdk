@@ -278,7 +278,7 @@ describe("handler with pre-recalled results", () => {
     expect(originalHandler).not.toHaveBeenCalled();
   });
 
-  it("skipNavigation request whose remembered data expired: dropped with a warning, handler never runs on a fetch-less request", async () => {
+  it("skipNavigation request whose remembered data expired: fails the request (noRetry) so the gap surfaces in failedRequestHandler", async () => {
     const api = createFakeApi(new Map()); // brain no longer knows anything
     stubFetch(api.fetchImpl as any);
 
@@ -291,7 +291,11 @@ describe("handler with pre-recalled results", () => {
       userData: { __fetchBrainResult: { known: true } },
       skipNavigation: true,
     });
-    await expect(enhanced.requestHandler(context)).resolves.toBeUndefined();
+    // Retrying is useless (the fetch was already skipped) — the request must fail
+    // once, without retries, so the missing record is visible to error tooling
+    // instead of reading as a silent success.
+    await expect(enhanced.requestHandler(context)).rejects.toThrow(/no longer available/);
+    expect(context.request.noRetry).toBe(true);
 
     expect(originalHandler).not.toHaveBeenCalled(); // would crash: no response body exists
     expect(pushed).toEqual([]);
@@ -356,6 +360,76 @@ describe("handler with pre-recalled results", () => {
   });
 });
 
+describe("stash survival across handler retries", () => {
+  it("re-stashes on handler failure: a Crawlee retry is served from the stash with no extra recall", async () => {
+    const api = createFakeApi(new Map([["https://site/p/1", { title: "one" }]]));
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+    await enhanced.addRequests([{ url: "https://site/p/1" }]);
+
+    // Attempt 1: the dataset write fails AFTER the stash was consumed.
+    const failing = makeContext(enqueued[0]);
+    failing.context.pushData = vi.fn(async () => {
+      throw new Error("dataset write failed");
+    });
+    await expect(enhanced.requestHandler(failing.context)).rejects.toThrow("dataset write failed");
+
+    // Attempt 2 (Crawlee retry): must serve from the re-stashed payload —
+    // no fallback recall, no risk of the expired-memory drop path.
+    const retry = makeContext(enqueued[0]);
+    await enhanced.requestHandler(retry.context);
+    expect(retry.pushed).toEqual([{ title: "one" }]);
+    expect(api.recallCalls()).toHaveLength(1); // enqueue-time bulk call only
+  });
+});
+
+describe("expired-memory drop vs transient API failure", () => {
+  it("fallback recall (API down) on a fetch-skipped request: retryable error, NOT noRetry", async () => {
+    // Restart scenario: marker present, stash empty. The recall that should
+    // restore the data hits a dead API — that's transient, not expired memory.
+    stubFetch((async () => new Response("oops", { status: 500 })) as any);
+
+    const originalHandler = vi.fn();
+    const { crawler } = createFakeCrawler(originalHandler);
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+
+    const request = {
+      url: "https://site/p/1",
+      userData: { __fetchBrainResult: { known: true } },
+      skipNavigation: true,
+    };
+    const attempt1 = makeContext(request);
+    await expect(enhanced.requestHandler(attempt1.context)).rejects.toThrow();
+    expect((attempt1.context.request as any).noRetry).toBeUndefined(); // Crawlee may retry
+
+    // The API recovers before the retry — the data comes back.
+    const api = createFakeApi(new Map([["https://site/p/1", { title: "one" }]]));
+    stubFetch(api.fetchImpl as any);
+    const attempt2 = makeContext(request);
+    await enhanced.requestHandler(attempt2.context);
+    expect(attempt2.pushed).toEqual([{ title: "one" }]);
+    expect(originalHandler).not.toHaveBeenCalled();
+  });
+
+  it("authoritative unknown (memory truly expired) still fails fast with noRetry", async () => {
+    const api = createFakeApi(new Map()); // API healthy, answer: unknown
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+
+    const { context } = makeContext({
+      url: "https://site/p/1",
+      userData: { __fetchBrainResult: { known: true } },
+      skipNavigation: true,
+    });
+    await expect(enhanced.requestHandler(context)).rejects.toThrow(/no longer available/);
+    expect((context.request as any).noRetry).toBe(true);
+  });
+});
+
 describe("stash identity across Crawlee's uniqueKey normalization", () => {
   it("consumes the stash when Crawlee computed a normalized uniqueKey after enqueue (no second recall)", async () => {
     const api = createFakeApi(new Map([["https://site/p/1#reviews", { title: "one" }]]));
@@ -380,6 +454,118 @@ describe("stash identity across Crawlee's uniqueKey normalization", () => {
     expect(pushed).toEqual([{ title: "one" }]);
     expect(originalHandler).not.toHaveBeenCalled();
     expect(api.recallCalls()).toHaveLength(1); // enqueue-time only — no double-billed fallback recall
+  });
+});
+
+describe("re-enqueue of a previously annotated request", () => {
+  // Crawlee Request instances aren't cloned by the wrapper (cloning would drop their
+  // internal state) — they're annotated in place. A caller reusing those instances
+  // for a later run must not have them read as user-set skipNavigation forever.
+  class FakeRequestInstance {
+    [key: string]: unknown;
+    constructor(o: Record<string, unknown>) {
+      Object.assign(this, o);
+    }
+  }
+
+  async function annotateInRunOne() {
+    const api1 = createFakeApi(new Map([["https://site/p/1", { title: "one" }]]));
+    stubFetch(api1.fetchImpl as any);
+    const instance: any = new FakeRequestInstance({ url: "https://site/p/1", label: "PRODUCT" });
+    const run1 = createFakeCrawler(async () => {});
+    const enhanced1: any = FetchBrain.enhance(run1.crawler, CONFIG);
+    await enhanced1.addRequests([instance]);
+    expect(instance.skipNavigation).toBe(true); // annotated in place
+    expect(instance.userData.__fetchBrainResult).toEqual({ known: true });
+    return instance;
+  }
+
+  it("memory expired by the later run: re-recalled, un-marked, fetches normally (not dropped forever)", async () => {
+    const instance = await annotateInRunOne();
+
+    // Run 2 (fresh process): the brain no longer knows this url.
+    const api2 = createFakeApi(new Map());
+    stubFetch(api2.fetchImpl as any);
+    const run2 = createFakeCrawler(async () => {});
+    const enhanced2: any = FetchBrain.enhance(run2.crawler, CONFIG);
+    await enhanced2.addRequests([instance]);
+
+    // Our own annotation must not read as user-set skipNavigation.
+    expect(api2.recallCalls()).toHaveLength(1);
+    expect(api2.recallCalls()[0].body.items.map((i: any) => i.request.url)).toEqual([
+      "https://site/p/1",
+    ]);
+    expect(instance.skipNavigation).toBe(false);
+    expect(instance.userData.__fetchBrainResult).toEqual({ known: false });
+  });
+
+  it("brain still knows on the later run: re-annotated with a fresh stash, fetch stays skipped", async () => {
+    const instance = await annotateInRunOne();
+
+    const api2 = createFakeApi(new Map([["https://site/p/1", { title: "fresh" }]]));
+    stubFetch(api2.fetchImpl as any);
+    const originalHandler = vi.fn();
+    const run2 = createFakeCrawler(originalHandler);
+    const enhanced2: any = FetchBrain.enhance(run2.crawler, CONFIG);
+    await enhanced2.addRequests([instance]);
+
+    expect(api2.recallCalls()).toHaveLength(1); // re-recalled AT ENQUEUE, not left to the handler
+    expect(instance.skipNavigation).toBe(true);
+    const { context, pushed } = makeContext(instance);
+    await enhanced2.requestHandler(context);
+    expect(pushed).toEqual([{ title: "fresh" }]); // served from run 2's stash
+    expect(originalHandler).not.toHaveBeenCalled();
+    expect(api2.recallCalls()).toHaveLength(1); // enqueue-time only
+  });
+
+  it("API unreachable on the later run: stale annotation stripped, fetches normally", async () => {
+    const instance = await annotateInRunOne();
+
+    stubFetch((async () => new Response("oops", { status: 500 })) as any);
+    const run2 = createFakeCrawler(async () => {});
+    const enhanced2: any = FetchBrain.enhance(run2.crawler, CONFIG);
+    await enhanced2.addRequests([instance]);
+
+    // Graceful degradation: with no fresh answer, the safe state is a normal fetch.
+    expect(instance.skipNavigation).toBe(false);
+    expect(instance.userData?.__fetchBrainResult).toBeUndefined();
+  });
+});
+
+describe("onRecalled via context.brain.use()", () => {
+  it("use() fires onRecalled with clean userData (alwaysRun handler doing its own bookkeeping)", async () => {
+    const api = createFakeApi(new Map([["https://site/p/1", { title: "one" }]]));
+    stubFetch(api.fetchImpl as any);
+
+    const events: RecalledEvent[] = [];
+    const handler = vi.fn(async (ctx: any) => {
+      await ctx.brain.use();
+    });
+    const { crawler, enqueued } = createFakeCrawler(handler);
+    const enhanced: any = FetchBrain.enhance(crawler, {
+      ...CONFIG,
+      alwaysRun: true,
+      onRecalled: (e) => {
+        events.push(e);
+      },
+    });
+
+    await enhanced.addRequests([
+      { url: "https://site/p/1", label: "PRODUCT", userData: { ean: "1" } },
+    ]);
+    const { context, pushed } = makeContext(enqueued[0]);
+    await enhanced.requestHandler(context);
+
+    expect(handler).toHaveBeenCalledOnce();
+    expect(pushed).toEqual([{ title: "one" }]);
+    expect(events).toHaveLength(1); // fired by use(), not double-fired
+    expect(events[0]).toMatchObject({
+      url: "https://site/p/1",
+      label: "PRODUCT",
+      data: { title: "one" },
+    });
+    expect(events[0].userData?.ean).toBe("1");
+    expect(events[0].userData?.__fetchBrainResult).toBeUndefined();
   });
 });
 
@@ -423,12 +609,33 @@ describe("run summary", () => {
       userData: { __fetchBrainResult: { known: true } },
       skipNavigation: true,
     });
-    await enhanced.requestHandler(context); // dropped: skipped fetch + expired memory
+    await enhanced.requestHandler(context).catch(() => {}); // dropped: skipped fetch + expired memory
     await enhanced.run();
 
     const summary = infoSpy.mock.calls.map((c) => c.join(" ")).find((l) => l.includes("Finished!"));
     expect(summary).toBeDefined();
     expect(summary).toContain("dropped: 1");
+  });
+});
+
+describe("stash overwrite", () => {
+  it("re-stashing an existing key does not evict an unrelated oldest entry", async () => {
+    const urls = Array.from({ length: MAX_STASH_ENTRIES }, (_, i) => `https://site/p/${i}`);
+    const api = createFakeApi(new Map(urls.map((u, i) => [u, { i }])));
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+
+    await enhanced.addRequests(urls); // stash exactly full
+    await enhanced.addRequests([urls[MAX_STASH_ENTRIES - 1]]); // overwrites an existing key
+    const baseline = api.recallCalls().length;
+
+    // Entry 0 (oldest) must still be served from the stash — no extra recall.
+    const ctx0 = makeContext(enqueued[0]);
+    await enhanced.requestHandler(ctx0.context);
+    expect(ctx0.pushed).toEqual([{ i: 0 }]);
+    expect(api.recallCalls()).toHaveLength(baseline);
   });
 });
 
@@ -449,5 +656,38 @@ describe("recallBulk chunking", () => {
     expect(results[0]).toMatchObject({ known: true, data: { i: 0 } });
     expect(results[1].known).toBe(false);
     expect(results[149]).toMatchObject({ known: true, data: { i: 149 } });
+  });
+
+  it("runs chunks concurrently (bounded) while preserving result order", async () => {
+    const api = createFakeApi(
+      new Map<string, Record<string, unknown>>([
+        ["https://site/p/0", { i: 0 }],
+        ["https://site/p/250", { i: 250 }],
+      ]),
+    );
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const delayed = async (input: RequestInfo | URL, init?: RequestInit) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      try {
+        await new Promise((r) => setTimeout(r, 20));
+        return await api.fetchImpl(input, init);
+      } finally {
+        inFlight--;
+      }
+    };
+    stubFetch(delayed as any);
+
+    const client = new FetchBrainClient(CONFIG);
+    const requests = Array.from({ length: 300 }, (_, i) => ({ url: `https://site/p/${i}` }));
+    const results = await client.recallBulk(requests);
+
+    expect(maxInFlight).toBeGreaterThan(1); // chunks overlap — not a sequential loop
+    expect(maxInFlight).toBeLessThanOrEqual(5); // but bounded
+    expect(results).toHaveLength(300);
+    expect(results[0]).toMatchObject({ known: true, data: { i: 0 } });
+    expect(results[250]).toMatchObject({ known: true, data: { i: 250 } }); // order preserved
+    expect(results[1].known).toBe(false);
   });
 });
