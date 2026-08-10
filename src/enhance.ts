@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "async_hooks";
-import type { FetchBrainConfig, Logger, RawRequest, TelemetryData } from "./types";
+import type { FetchBrainConfig, Logger, RawRequest, RecallResult, TelemetryData } from "./types";
 import {
   FetchBrainClient,
   setScrapeContext,
@@ -236,6 +236,17 @@ export class FetchBrain {
     // Per-crawl set to track urls already warned about default uniqueKey
     const warnedKeys = new Set<string>();
 
+    // Pre-recalled payloads live here, NOT in the persisted request queue record — a
+    // full learned record stashed in userData would bloat every queue write and can hit
+    // platform request-size limits. userData carries only a small {known} marker; if the
+    // process restarts between enqueue and execution (map lost), the handler falls back
+    // to one batched recall. Entries are deleted on consumption so long crawls don't grow.
+    const preRecalledData = new Map<string, Record<string, unknown>>();
+    // Identity key: `uniqueKey ?? url` folds Crawlee's GET default (uniqueKey = url), so
+    // the enqueue-time key (often no explicit uniqueKey yet) matches the handler-time key.
+    const stashKey = (r: { url: string; method?: string; uniqueKey?: string }) =>
+      `${(r.method ?? "GET").toUpperCase()} ${r.uniqueKey ?? r.url}`;
+
     // Labels that bypass FetchBrain entirely (no recall/learn/brain).
     const skipLabels = config.skipLabels && config.skipLabels.length ? new Set(config.skipLabels) : undefined;
 
@@ -271,8 +282,44 @@ export class FetchBrain {
       warnDefaultUniqueKey(rawRequest, logger, warnedKeys);
 
       try {
-        // 1. Check if FetchBrain "knows" this URL
-        const aiResult = await client.recall(rawRequest);
+        // 1. Check if FetchBrain "knows" this URL. An enqueue-time pre-recall marker
+        // (stashed on userData by the addRequests wrapper) wins: no second recall
+        // round-trip, no double-billed query. A known marker carries no payload —
+        // the data waits in the in-process map; if the process restarted since
+        // enqueue (map empty), one batched recall restores it.
+        const preRecalled = request.userData?.__fetchBrainResult as
+          | RecallResult
+          | undefined;
+        let aiResult: RecallResult;
+        if (preRecalled?.known) {
+          const key = stashKey(rawRequest);
+          const stashedData = preRecalledData.get(key);
+          if (stashedData) {
+            preRecalledData.delete(key); // consumed — keep the map from growing over long crawls
+            aiResult = { known: true, data: stashedData };
+          } else {
+            aiResult = await client.recall(rawRequest);
+          }
+        } else if (preRecalled) {
+          aiResult = preRecalled; // pre-checked and unknown — no second recall
+        } else {
+          aiResult = await client.recall(rawRequest);
+        }
+
+        // A request we marked skipNavigation at enqueue never fetched. If its
+        // remembered data is no longer available (memory expired across a process
+        // restart), running the original handler without a response would crash it —
+        // drop the request instead; it will be re-scraped on a future run.
+        if (
+          preRecalled?.known &&
+          (request as { skipNavigation?: boolean }).skipNavigation &&
+          !(aiResult.known && aiResult.data)
+        ) {
+          logger.warn(
+            `FetchBrain: ${url} skipped its fetch at enqueue time but its remembered data is no longer available — dropping this request (it will be re-scraped on a future run).`,
+          );
+          return;
+        }
 
         // Track if brain data was used (to skip learning)
         let usedAIData = false;
@@ -309,6 +356,22 @@ export class FetchBrain {
           logger.info(`Recalled: ${url} [${handlerLabel || "default"}]`);
           if (originalPushData) {
             await originalPushData.call(context, aiResult.data);
+          }
+          // Per-record bookkeeping (e.g. platform billing) normally lives in the
+          // skipped handler — give it one hook. Never let it break the crawl.
+          // userData comes from the rawRequest snapshot: SDK bookkeeping keys already
+          // stripped, taken before enhance mutated request.userData.
+          if (config.onRecalled) {
+            try {
+              await config.onRecalled({
+                url,
+                label: handlerLabel,
+                userData: rawRequest.userData,
+                data: aiResult.data,
+              });
+            } catch (hookErr) {
+              logger.debug(`onRecalled hook error: ${hookErr}`);
+            }
           }
           return;
         }
@@ -490,6 +553,96 @@ export class FetchBrain {
               `, duration: ${duration}s`,
           );
         }
+      };
+    }
+
+    // Pre-recall at enqueue time (default on). In HttpCrawler/CheerioCrawler the HTTP
+    // fetch happens BEFORE the (wrapped) requestHandler runs, so a recall inside the
+    // handler is too late to save the fetch. Recalling the batch as it enters the queue
+    // lets known requests skip navigation entirely (request.skipNavigation) and removes
+    // the per-request recall round-trip for the rest. `run(startRequests)` funnels
+    // through addRequests, so wrapping it covers both entry points.
+    // Note: this covers ARRAY input to crawler.addRequests()/run(requests) only.
+    // Crawlee's context-level helpers (`enqueueLinks()`, the context `addRequests()`)
+    // feed the queue via generators/other paths and pass through un-recalled — inside
+    // a handler, enqueue follow-ups with `context.crawler.addRequests([...])` to get
+    // pre-recall (see README).
+    if (config.preRecall !== false && typeof crawlerAny.addRequests === "function") {
+      const originalAddRequests = crawlerAny.addRequests.bind(crawlerAny);
+      crawlerAny.addRequests = async (requests: unknown, options?: unknown) => {
+        if (!Array.isArray(requests) || requests.length === 0) {
+          return originalAddRequests(requests, options);
+        }
+        // Never mutate caller-owned inputs: a startRequests array reused for a second
+        // run (or shared between crawlers) must not carry this run's stash into the
+        // next. Strings are normalized, plain option objects shallow-cloned; Crawlee
+        // Request instances pass through as-is (cloning would drop their internal
+        // state) and are the one case annotated in place.
+        const batch: unknown[] = requests.map((r) => {
+          if (typeof r === "string") return { url: r };
+          if (r && typeof r === "object" && Object.getPrototypeOf(r) === Object.prototype) {
+            return { ...r };
+          }
+          return r;
+        });
+        try {
+          type EnqueuedRequest = {
+            url?: string;
+            method?: string;
+            uniqueKey?: string;
+            label?: string;
+            skipNavigation?: boolean;
+            userData?: Record<string, unknown>;
+          };
+          // Eligible: has a url, label not bypassed, not already skipNavigation (a
+          // request that intentionally skips navigation has its own handler logic —
+          // auto-pushing recalled data over it would be wrong), and an identity that
+          // is stable between enqueue and execution: for non-GET without an explicit
+          // uniqueKey, Crawlee computes an extended key at Request construction, so an
+          // enqueue-time recall would query the wrong identity — leave those to the
+          // handler-time recall, which sees the computed key.
+          const candidateIdx: number[] = [];
+          for (let i = 0; i < batch.length; i++) {
+            const r = batch[i] as EnqueuedRequest;
+            if (!r || typeof r.url !== "string" || r.skipNavigation) continue;
+            if (skipLabels && skipLabels.has(r.label || "default")) continue;
+            if ((r.method ?? "GET").toUpperCase() !== "GET" && !r.uniqueKey) continue;
+            candidateIdx.push(i);
+          }
+          if (candidateIdx.length > 0) {
+            const rawRequests = candidateIdx.map((i) =>
+              buildRawRequest(batch[i] as Record<string, unknown>),
+            );
+            const results = await client.recallBulk(rawRequests);
+            let known = 0;
+            candidateIdx.forEach((reqIdx, j) => {
+              const result = results[j];
+              // On fallback (API degraded) stash nothing — the handler-time recall
+              // path stays as the retry.
+              if (!result || result.fallback) return;
+              const r = batch[reqIdx] as EnqueuedRequest;
+              if (result.known && result.data) {
+                // Marker in userData (persisted, tiny); payload in the in-process map.
+                r.userData = { ...r.userData, __fetchBrainResult: { known: true } };
+                preRecalledData.set(stashKey(rawRequests[j]), result.data);
+                if (!shouldRunHandler(config.alwaysRun, r.label)) {
+                  r.skipNavigation = true; // Crawlee will never fetch this request
+                  known++;
+                }
+              } else {
+                r.userData = { ...r.userData, __fetchBrainResult: { known: false } };
+              }
+            });
+            logger.debug(
+              `Pre-recalled ${candidateIdx.length} enqueued request(s): ${known} known (fetch skipped)`,
+            );
+          }
+        } catch (err) {
+          // Enqueueing must never fail because of FetchBrain — fall back to
+          // handler-time recall for this batch.
+          logger.debug(`Pre-recall failed, falling back to handler-time recall: ${err}`);
+        }
+        return originalAddRequests(batch, options);
       };
     }
 

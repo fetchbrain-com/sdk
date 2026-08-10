@@ -215,10 +215,54 @@ interface FetchBrainConfig {
   learning?: boolean; // Enable AI learning (default: true)
   alwaysRun?: boolean | string | string[]; // Which handlers to run (default: false)
   skipLabels?: string[]; // Labels that bypass FetchBrain entirely (default: none)
+  preRecall?: boolean; // Recall requests in bulk as they're enqueued (default: true)
+  onRecalled?: (event: RecalledEvent) => void | Promise<void>; // Per-record hook when known data is delivered
   timeout?: number; // Request timeout in ms (default: 500)
   debug?: boolean; // Enable debug logging
 }
 ```
+
+### Recall at enqueue time (`preRecall`)
+
+In `HttpCrawler`/`CheerioCrawler`, Crawlee performs the HTTP request *before*
+your request handler runs — so a recall inside the handler is too late to
+save the fetch. With `preRecall` (on by default), the SDK checks the brain
+the moment requests enter the queue: each `crawler.addRequests()` array
+becomes a single bulk recall, known requests are enqueued with Crawlee's
+`skipNavigation` so their fetch never happens, and unknown requests carry
+their recall result with them so the handler doesn't ask twice. Enqueue in
+batches (one `addRequests` call per page of discovered items) to get the
+most out of it. If the brain is unreachable, requests are enqueued unchanged
+and your crawl proceeds at native speed — same graceful degradation as
+everywhere else.
+
+Two things to know:
+
+- **Scope** — pre-recall applies to arrays passed to `crawler.addRequests()`
+  or `crawler.run(requests)`. Crawlee's context-level `enqueueLinks()` and
+  context `addRequests()` reach the queue by other paths and are not
+  pre-recalled (they still get handler-time recall). Inside a handler,
+  enqueue follow-ups with `context.crawler.addRequests([...])` to keep the
+  benefit — as in the example above.
+- **Metering** — recall queries are counted when requests are enqueued, so
+  duplicates the queue later drops still count as queries.
+
+### Reacting to recalled records (`onRecalled`)
+
+When the brain knows a request, your handler is skipped and the remembered
+data is pushed for you — which also skips any per-record bookkeeping living
+in that handler (billing events, counters, follow-up enqueues). `onRecalled`
+runs once per recalled record with `{ url, label, userData, data }`:
+
+```typescript
+FetchBrain.enhance(crawler, {
+  onRecalled: async ({ userData }) => {
+    await Actor.charge({ eventName: "product-detail", count: 1 });
+  },
+});
+```
+
+Hook errors are swallowed (logged at debug) — they never break the crawl.
 
 Fine-grained routing control with `alwaysRun` — run every handler, none, or
 only specific labels when a request is known:
@@ -307,11 +351,11 @@ const crawler = FetchBrain.enhance(
 
 ### `context.brain` Properties
 
-| Property  | Type     | Description                       |
-| --------- | -------- | ---------------------------------- |
-| `known`   | boolean  | Whether the brain knows this URL   |
-| `data`    | object   | Brain data (if known)              |
-| `use()`   | function | Push brain data and skip scraping  |
+| Property | Type     | Description                       |
+| -------- | -------- | --------------------------------- |
+| `known`  | boolean  | Whether the brain knows this URL  |
+| `data`   | object   | Brain data (if known)             |
+| `use()`  | function | Push brain data and skip scraping |
 
 ## Using Dataset.pushData
 

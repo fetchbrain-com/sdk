@@ -56,6 +56,7 @@ export type {
   LearnResponse,
   StatsResponse,
   RecallResult,
+  RecalledEvent,
   AskResponse,
   CircuitState,
   CircuitBreakerConfig,

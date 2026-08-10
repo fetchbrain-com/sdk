@@ -21,6 +21,8 @@ import { buildNativeContext, getPlatformBuildId } from "./native-context";
 const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
 const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
+const BULK_RECALL_TIMEOUT = 3000; // Enqueue-time pre-recall is off the per-request hot path: favor reliability over fast-fail
+const MAX_BULK_ITEMS = 100; // API's MAX_ITEMS_PER_REQUEST — recallBulk chunks to stay under it
 const ASK_TIMEOUT = 10000; // Ask hits the knowledge index; give it room like learn
 
 /**
@@ -73,12 +75,12 @@ export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
     >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
@@ -101,6 +103,8 @@ export class FetchBrainClient {
       batch: config.batch,
       circuitBreaker: config.circuitBreaker,
       skipLabels: config.skipLabels, // enhance-only; stored so getConfig() round-trips
+      preRecall: config.preRecall, // enhance-only; stored so getConfig() round-trips
+      onRecalled: config.onRecalled, // enhance-only; stored so getConfig() round-trips
     };
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);
@@ -139,19 +143,27 @@ export class FetchBrainClient {
   }
 
   /**
-   * Recall multiple requests at once — returns ordered array matching input order
+   * Recall multiple requests at once — returns ordered array matching input order.
+   * Chunks to the API's 100-item cap; a failed chunk degrades to fallback results
+   * for its own items only.
    */
   async recallBulk(requests: RawRequest[]): Promise<RecallResult[]> {
-    if (this.circuitBreaker.isOpen()) {
-      return requests.map(() => ({ known: false, fallback: true }));
+    const results: RecallResult[] = [];
+    for (let start = 0; start < requests.length; start += MAX_BULK_ITEMS) {
+      const chunk = requests.slice(start, start + MAX_BULK_ITEMS);
+      if (this.circuitBreaker.isOpen()) {
+        results.push(...chunk.map(() => ({ known: false, fallback: true })));
+        continue;
+      }
+      try {
+        const items = chunk.map((request, i) => ({ ref: String(i), request }));
+        const chunkResults = await this.executeBatchQuery(items, BULK_RECALL_TIMEOUT);
+        results.push(...items.map((i) => chunkResults.get(i.ref) ?? { known: false }));
+      } catch {
+        results.push(...chunk.map(() => ({ known: false, fallback: true })));
+      }
     }
-    try {
-      const items = requests.map((request, i) => ({ ref: String(i), request }));
-      const results = await this.executeBatchQuery(items);
-      return items.map((i) => results.get(i.ref) ?? { known: false });
-    } catch {
-      return requests.map(() => ({ known: false, fallback: true }));
-    }
+    return results;
   }
 
   /**
@@ -262,6 +274,7 @@ export class FetchBrainClient {
    */
   private async executeBatchQuery(
     items: { ref: string; request: RawRequest }[],
+    timeout?: number,
   ): Promise<Map<string, RecallResult>> {
     const results = new Map<string, RecallResult>();
 
@@ -276,10 +289,14 @@ export class FetchBrainClient {
     }
 
     try {
-      const response = await this.makeRequest<RecallResponse>("/v1/recall", {
-        method: "POST",
-        body: JSON.stringify(request),
-      });
+      const response = await this.makeRequest<RecallResponse>(
+        "/v1/recall",
+        {
+          method: "POST",
+          body: JSON.stringify(request),
+        },
+        timeout,
+      );
 
       this.circuitBreaker.recordSuccess();
 
