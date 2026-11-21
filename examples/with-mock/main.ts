@@ -10,9 +10,9 @@
 import { MockFetchBrain } from '../../src/mock';
 
 async function main() {
-  // Create a mock with pre-trained knowledge
+  // Create a mock with seeded memory
   const mock = new MockFetchBrain({
-    initialKnowledge: new Map([
+    initialMemory: new Map([
       ['https://example.com/known', { title: 'Known Product', price: 19.99 }],
     ]),
     // Optional: simulate latency
@@ -25,7 +25,7 @@ async function main() {
     { url: 'https://example.com/product/2', data: { title: 'Product 2', price: 14.99 } },
   ]);
 
-  console.log('Knowledge base size after seeding:', mock.getKnowledgeSize());
+  console.log('Memory size after seeding:', mock.getMemorySize());
 
   // Test recall
   console.log('\n=== Recall known URL ===');
@@ -38,7 +38,7 @@ async function main() {
 
   console.log('\n=== Learn new data ===');
   await mock.learn({ url: 'https://example.com/new' }, { title: 'New Product' });
-  console.log('Knowledge base size after learning:', mock.getKnowledgeSize());
+  console.log('Memory size after learning:', mock.getMemorySize());
 
   console.log('\n=== Recall newly learned URL ===');
   const newData = await mock.recall({ url: 'https://example.com/new' });

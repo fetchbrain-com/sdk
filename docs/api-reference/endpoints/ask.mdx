@@ -63,10 +63,10 @@ far, instead of looking up a single URL. Useful for cross-page questions like
 
 | Field             | Type   | Description                                            |
 | ----------------- | ------ | -------------------------------------------------------- |
-| `sources`         | array  | Matched knowledge entries, best match first               |
+| `sources`         | array  | Matched memory entries, best match first                  |
 | `sources[].score` | number | Relevance score 0–1                                      |
 | `sources[].url`   | string | Source URL, when available                                |
-| `sources[].data`  | object | The knowledge FetchBrain returned for this source          |
+| `sources[].data`  | object | The remembered data FetchBrain returned for this source    |
 | `answer`          | string | Synthesized answer (present only when `answer: true`)     |
 | `status`          | string | `ok` or `unavailable`                                     |
 

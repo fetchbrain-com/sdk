@@ -15,7 +15,9 @@ import type {
 import { deriveIdentity } from "./derive-identity";
 
 export interface MockFetchBrainOptions {
-  /** Pre-trained memory */
+  /** Seed memory: Map<url, data> the mock already knows at construction */
+  initialMemory?: Map<string, Record<string, unknown>>;
+  /** @deprecated Use `initialMemory`. Still honored; on a URL in both, `initialMemory` wins. */
   initialKnowledge?: Map<string, Record<string, unknown>>;
   /** Simulate API failures */
   simulateFailures?: boolean;
@@ -26,10 +28,10 @@ export interface MockFetchBrainOptions {
 }
 
 /**
- * Mock FetchBrain client for testing
+ * Mock FetchBrain client for testing — an in-memory brain, no network
  */
 export class MockFetchBrain {
-  private knowledge: Map<
+  private memory: Map<
     string,
     { url: string; data: Record<string, unknown>; learnedAt: string }
   >;
@@ -37,7 +39,7 @@ export class MockFetchBrain {
   private _stats = { queries: 0, known: 0, learned: 0 };
 
   constructor(options: MockFetchBrainOptions = {}) {
-    this.knowledge = new Map();
+    this.memory = new Map();
     this.options = {
       simulateFailures: false,
       failureRate: 0,
@@ -45,10 +47,12 @@ export class MockFetchBrain {
       ...options,
     };
 
-    // Initialize with provided knowledge (Map<url, data>)
-    if (options.initialKnowledge) {
-      for (const [url, data] of options.initialKnowledge) {
-        this.knowledge.set(deriveIdentity({ url }), {
+    // Seed memory (Map<url, data>). The deprecated initialKnowledge alias still works;
+    // it is applied first so initialMemory wins on a URL present in both.
+    for (const seed of [options.initialKnowledge, options.initialMemory]) {
+      if (!seed) continue;
+      for (const [url, data] of seed) {
+        this.memory.set(deriveIdentity({ url }), {
           url,
           data,
           learnedAt: new Date().toISOString(),
@@ -76,7 +80,7 @@ export class MockFetchBrain {
     }
 
     this._stats.queries++;
-    const known = this.knowledge.get(deriveIdentity(request));
+    const known = this.memory.get(deriveIdentity(request));
 
     if (known) {
       this._stats.known++;
@@ -103,7 +107,7 @@ export class MockFetchBrain {
       throw new Error("Simulated API failure");
     }
 
-    this.knowledge.set(deriveIdentity(request), {
+    this.memory.set(deriveIdentity(request), {
       url: request.url,
       data,
       learnedAt: new Date().toISOString(),
@@ -141,7 +145,7 @@ export class MockFetchBrain {
   ): Promise<AskResponse> {
     const cap = Math.min(Math.max(1, opts?.limit ?? 10), 20);
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const sources = [...this.knowledge.values()]
+    const sources = [...this.memory.values()]
       .map((entry) => {
         const haystack = JSON.stringify(entry.data).toLowerCase();
         const score =
@@ -186,7 +190,7 @@ export class MockFetchBrain {
         ? [{ url: urlOrEntries, data: data ?? {} }]
         : urlOrEntries;
     for (const entry of entries) {
-      this.knowledge.set(deriveIdentity({ url: entry.url }), {
+      this.memory.set(deriveIdentity({ url: entry.url }), {
         url: entry.url,
         data: entry.data,
         learnedAt: new Date().toISOString(),
@@ -198,22 +202,29 @@ export class MockFetchBrain {
    * Clear all remembered data
    */
   clear(): void {
-    this.knowledge.clear();
+    this.memory.clear();
     this._stats = { queries: 0, known: 0, learned: 0 };
   }
 
   /**
-   * Get current knowledge base size
+   * Number of entries currently in the mock's memory
+   */
+  getMemorySize(): number {
+    return this.memory.size;
+  }
+
+  /**
+   * @deprecated Use `getMemorySize()`.
    */
   getKnowledgeSize(): number {
-    return this.knowledge.size;
+    return this.getMemorySize();
   }
 
   /**
    * Check if the brain knows a URL (keys by deriveIdentity({ url }))
    */
   has(url: string): boolean {
-    return this.knowledge.has(deriveIdentity({ url }));
+    return this.memory.has(deriveIdentity({ url }));
   }
 }
 

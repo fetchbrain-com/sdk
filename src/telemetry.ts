@@ -1,13 +1,14 @@
 /**
  * Telemetry Collection Module
  * 
- * Collects anonymized performance and behavior data from Crawlee contexts.
- * All data is sanitized - no PII, credentials, or raw content is ever collected.
+ * Collects opt-in, pseudonymous performance and behavior data from Crawlee contexts
+ * (sent with the API key, so linked to the account). Raw URLs, bodies, proxy URLs/IPs
+ * and error messages are not collected; hostname, path pattern and label are.
  */
 
 import type { TelemetryData, TelemetryConfig } from './types';
 
-// Simple hash function for URLs (browser-compatible)
+// Unsalted SHA-256 of the URL, truncated to 16 hex chars (browser-compatible)
 async function hashString(str: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(str);
@@ -154,7 +155,7 @@ export async function collectTelemetry(
     timestamp: new Date().toISOString(),
   };
   
-  // Performance metrics (opt-in)
+  // Performance metrics (sub-flag, default on)
   if (config.sharePerformance !== false) {
     telemetry.statusCode = statusCode;
     telemetry.retryCount = context.request.retryCount;
@@ -168,21 +169,21 @@ export async function collectTelemetry(
     }
   }
   
-  // Proxy info (opt-in, anonymized)
+  // Proxy info (sub-flag, default on) — proxy URL/IP never sent; type derived locally
   if (config.shareProxyInfo !== false && context.proxyInfo) {
     telemetry.proxyCountry = context.proxyInfo.countryCode;
     telemetry.proxyType = extractProxyType(context.proxyInfo.url);
     telemetry.proxySuccess = statusCode ? statusCode < 400 : undefined;
   }
   
-  // Site patterns / blocking (opt-in)
+  // Site patterns / blocking (sub-flag, default on)
   if (config.shareSitePatterns !== false) {
     const isBlocked = statusCode && (statusCode === 403 || statusCode === 429 || statusCode >= 500);
     telemetry.blocked = isBlocked || !!error;
     telemetry.blockType = detectBlockType(statusCode, error?.message);
   }
   
-  // Session info (always anonymized)
+  // Session info (sent whenever telemetry is enabled)
   if (context.session) {
     telemetry.sessionAge = context.session.usageCount;
     telemetry.sessionErrorScore = context.session.errorScore;

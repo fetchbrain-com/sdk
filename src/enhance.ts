@@ -120,7 +120,7 @@ function shouldRunHandler(
   alwaysRun: boolean | string | string[] | undefined,
   label: string | undefined,
 ): boolean {
-  // Default: skip when AI knows
+  // Default: skip when the brain knows
   if (alwaysRun === undefined || alwaysRun === false) {
     return false;
   }
@@ -141,7 +141,7 @@ function shouldRunHandler(
  * FetchBrain main class
  *
  * Provides the static enhance() method to wrap Crawlee crawlers
- * with AI-powered optimization
+ * with brain recall and learning
  */
 export class FetchBrain {
   private client: FetchBrainClient;
@@ -195,8 +195,8 @@ export class FetchBrain {
     const client = new FetchBrainClient(config);
     const logger = createLogger(config.debug ? "debug" : "info", true);
 
-    // Telemetry is OPT-IN — enable it to join the access-intelligence network
-    // (`telemetry: { enabled: true }`). Anonymized when on; off otherwise.
+    // Telemetry is OPT-IN (`telemetry: { enabled: true }`); off otherwise. When on it
+    // is pseudonymous — sent with the API key — see README "Telemetry (opt-in)".
     const telemetryConfig = config.telemetry ?? { enabled: false };
 
     // Telemetry buffer - automatically flushes to API
@@ -373,7 +373,7 @@ export class FetchBrain {
         let usedAIData = false;
         const originalPushData = context.pushData;
 
-        // Per-record bookkeeping (e.g. platform billing) normally lives in the
+        // Per-record bookkeeping (e.g. metrics, counters) normally lives in the
         // handler that recalled data replaces — this is its one hook. Never let it
         // break the crawl. userData comes from the rawRequest snapshot: SDK
         // bookkeeping keys already stripped, taken before enhance mutated
@@ -758,9 +758,9 @@ interface DatasetLike {
 }
 
 /**
- * AI-aware pushData wrapper
+ * Learning-aware pushData wrapper
  *
- * Use this instead of Dataset.pushData() for automatic AI learning.
+ * Use this instead of Dataset.pushData() so the brain learns from what you push.
  * Works with both static Dataset class and dataset instances.
  *
  * @example
@@ -786,7 +786,7 @@ export async function pushData(
 ): Promise<void> {
   const ctx = getCurrentContext();
 
-  // Learn if we're in a FetchBrain-enhanced request and AI doesn't already know
+  // Learn if we're in a FetchBrain-enhanced request and the brain doesn't already know
   if (ctx && ctx.learning && !ctx.aiKnown) {
     // Handle both single object and array
     const items = Array.isArray(data) ? data : [data];

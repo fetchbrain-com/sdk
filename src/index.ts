@@ -1,8 +1,7 @@
 /**
  * FetchBrain SDK
  *
- * AI-powered scraping optimization for Crawlee crawlers.
- * "The AI That Already Knows The Web"
+ * Memory for your scrapers — recall before you fetch, teach what you learn.
  *
  * @example
  * ```typescript
@@ -10,15 +9,15 @@
  * import { CheerioCrawler } from 'crawlee';
  *
  * const crawler = FetchBrain.enhance(new CheerioCrawler({
- *   requestHandler: async ({ $, request }) => {
- *     // This only runs when AI needs to "learn" (new page)
+ *   requestHandler: async ({ $, pushData }) => {
+ *     // Runs only when the brain doesn't know this request yet
  *     const data = { title: $('h1').text() };
- *     await Dataset.pushData(data);
+ *     await pushData(data); // context.pushData — the brain learns from it
  *   },
  * }), {
  *   apiKey: process.env.FETCHBRAIN_API_KEY,
  *   memory: 'recent',      // How far back the brain recalls
- *   learning: true,        // AI learns from scraped pages
+ *   learning: true,        // Teach the brain from scraped data
  * });
  *
  * await crawler.run(urls);

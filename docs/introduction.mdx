@@ -1,15 +1,16 @@
 ---
 title: Introduction
-description: "A shared memory pool for your scrapers — recall what's known, learn what's new, ask questions across everything"
+description: "Memory for your scrapers — recall what's known, learn what's new, ask questions across everything"
 ---
 
 # Welcome to FetchBrain
 
 Every scraping run re-fetches requests you already made last time — paying
 for proxies, browsers, retries, and CAPTCHAs to re-learn things you already
-know. FetchBrain gives your scrapers a **shared memory pool**: known
-requests come back in milliseconds with zero HTTP traffic; unknown ones run
-normally and teach the brain for next time.
+know. FetchBrain gives each of your scrapers a **memory**: known requests
+come back in milliseconds without your scraper fetching the page; unknown
+ones run normally and teach the brain for next time. Recall is keyed by your
+scraper's identity; `ask()` answers across everything your scrapers have learned.
 
 ## The two-half model
 
@@ -18,7 +19,7 @@ FetchBrain is two capabilities working together:
 <CardGroup cols={2}>
   <Card title="Memory" icon="database">
     **Recall** and **learn**. Before each request, the SDK asks "do I
-    already know this?" Known requests skip the network entirely. Unknown
+    already know this?" Known requests skip the fetch. Unknown
     ones run your handler, then teach the brain — automatically, and always
     free.
   </Card>
@@ -41,29 +42,24 @@ Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES �
 ```
 
 1. **Recall** — before each request, the SDK asks the brain if it already knows it
-2. **Known** — data returns instantly and the HTTP request is skipped
-3. **Learning** — unknown requests run through your handler as normal, and the result teaches the brain for every future run
+2. **Known** — the remembered data is pushed for you and your handler is skipped; requests recalled at enqueue time (the default) also skip the fetch
+3. **Learning** — unknown requests run through your handler as normal, and the result teaches the brain for that scraper's future runs
 
 This works for **any request, not just pages** — HTML, JSON APIs, POSTs with
 bodies. Identity is derived from the full request server-side, so it isn't
 limited to GET-and-a-URL scraping.
 
-## Why a shared pool
+## Per-scraper recall, account-wide ask
 
-Everything your scrapers learn accumulates under one API key — not one
-scraper, not one run. Your daily product crawl, your price monitor, and your
-side-project spider all deposit into the same brain. That compounding has
-two payoffs:
+Everything your scrapers learn accumulates under one API key, and that pays
+off in two different ways:
 
-- **Cost falls as coverage grows.** The more you've already taught the
-  brain, the fewer requests need a real fetch on the next run.
+- **Recall is per scraper.** Recall is keyed by your scraper's identity, so
+  each scraper recalls what it learned. The more a scraper has learned, the
+  fewer of its requests need a real fetch on the next run.
 - **`ask()` sees across all of it.** A question like "which products are
   under $20?" doesn't care which scraper originally learned that price —
-  it searches the whole pool.
-
-Recall is still namespaced per scraper identity, so one scraper's responses
-never leak into another's — but everything feeds the same shared knowledge
-for `ask()`.
+  it answers from everything learned under your key.
 
 ## Key features
 
@@ -130,6 +126,6 @@ See [Memory Depth](/docs/sdk/memory-depth) for details.
     Direct HTTP API for any language
   </Card>
   <Card title="Telemetry" icon="chart-line" href="/docs/advanced/telemetry">
-    Opt-in anonymized diagnostics
+    Opt-in, pseudonymous diagnostics
   </Card>
 </CardGroup>

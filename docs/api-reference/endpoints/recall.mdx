@@ -23,7 +23,7 @@ results to inputs regardless of order.
 
 ## How identity works
 
-FetchBrain derives the knowledge key **server-side** from `(method, normalized url, uniqueKey)`.
+FetchBrain derives the memory key **server-side** from `(method, normalized url, uniqueKey)`.
 The request **body is never part of the key** — it carries volatile data
 (timestamps, nonces, paging cursors). If you scrape several distinct resources
 that share one URL and method (for example POST or GraphQL endpoints), set a
@@ -65,7 +65,7 @@ distinct `uniqueKey` per resource so each is remembered separately. When
 
 <ParamField body="memory" type="string" default="recent">
   Memory depth: `fresh` (1h), `recent` (24h), `standard` (7d), or `deep` (30d).
-  Controls how far back the brain looks for knowledge. Any other value returns
+  Controls how far back the brain recalls. Any other value returns
   `400 BAD_REQUEST`.
 </ParamField>
 
@@ -97,7 +97,7 @@ distinct `uniqueKey` per resource so each is remembered separately. When
 | -------------- | ------ | ----------------------------------------- |
 | `known`        | array  | Known items                               |
 | `known[].ref`  | string | The `ref` you supplied                    |
-| `known[].data` | object | The knowledge FetchBrain returned         |
+| `known[].data` | object | The remembered data FetchBrain returned  |
 | `unknown`      | array  | The `ref`s FetchBrain does not yet know    |
 
 ## Examples

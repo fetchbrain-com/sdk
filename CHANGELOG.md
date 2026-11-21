@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Docs
+- README telemetry disclosure corrected to match the code: telemetry is pseudonymous
+  (sent with your API key), the hostname is sent in plain text, the URL hash is a
+  truncated unsalted SHA-256, and every field, sub-flag and default is listed. Added a
+  "What leaves your process" section listing every request header and what is forwarded
+  with recall/learn (only `Authorization`, `Cookie` and `Set-Cookie` headers are stripped).
+- README now states that recall is scoped per scraper while `ask()` answers across your account.
+
+### Added
+- `MockFetchBrain`: `initialMemory` option and `getMemorySize()`. `initialKnowledge` and
+  `getKnowledgeSize()` keep working and are marked `@deprecated`.
+
 ## [0.3.1] - 2026-08-02
 
 - `refreshOnRebuild` now scopes learn, recall, and ask symmetrically. Previously, a platform

@@ -5,7 +5,7 @@
  * as a JSON header; the API maps it to scraper identity server-side.
  * Filtering is pattern-based, not vendor-based, so supporting a new
  * platform requires no SDK release — any runner exposing `*_ID` variables
- * works. Nothing outside these patterns ever leaves the process.
+ * works. No other environment variables are forwarded.
  */
 
 /**
@@ -55,7 +55,7 @@ export function buildNativeContext(
 
 /**
  * The platform's native build identifier, used by `refreshOnRebuild` to key
- * knowledge to the current scraper version.
+ * memory to the current scraper version.
  *
  * Scans for any env var whose name ends with `BUILD_ID` (e.g.
  * `CI_BUILD_ID`, `SCRAPER_BUILD_ID`). This keeps the SDK platform-agnostic —

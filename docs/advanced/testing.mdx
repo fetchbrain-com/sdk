@@ -10,7 +10,7 @@ The SDK includes a mock client for unit testing without hitting the production A
 ## MockFetchBrain
 
 `MockFetchBrain` mirrors the real client: `recall()` and `learn()` take a raw
-request object (`{ url, method?, uniqueKey?, ... }`), and `initialKnowledge` is a
+request object (`{ url, method?, uniqueKey?, ... }`), and `initialMemory` is a
 `Map` keyed by URL. The mock derives the same `(method, url, uniqueKey)` identity
 the API does, so a recall matches what you seeded.
 
@@ -18,7 +18,7 @@ the API does, so a recall matches what you seeded.
 import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
 
 const mock = new MockFetchBrain({
-  initialKnowledge: new Map([
+  initialMemory: new Map([
     ["https://example.com/product/1", { title: "Known Product" }],
     ["https://example.com/product/2", { title: "Another Product" }],
   ]),
@@ -38,7 +38,7 @@ import { MockFetchBrain } from "@fetchbrain.com/sdk/mock";
 describe("My Scraper", () => {
   it("uses brain data when known", async () => {
     const mock = new MockFetchBrain({
-      initialKnowledge: new Map([["https://example.com", { title: "Test" }]]),
+      initialMemory: new Map([["https://example.com", { title: "Test" }]]),
     });
 
     const result = await mock.recall({ url: "https://example.com" });
@@ -67,7 +67,7 @@ describe("My Scraper", () => {
 ```
 
 `MockFetchBrain` also exposes test helpers: `seed([{ url, data }])`,
-`clear()`, `has(url)`, and `getKnowledgeSize()`. It also implements `ask()`,
+`clear()`, `has(url)`, and `getMemorySize()`. It also implements `ask()`,
 mirroring the real API's naive substring-match behavior for local testing.
 
 ```typescript
@@ -95,7 +95,7 @@ const brain = new FetchBrain({
 
 The mock server:
 
-- Stores knowledge in memory
+- Keeps learned data in process memory
 - Responds instantly
 - Resets on restart
 

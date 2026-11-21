@@ -1,7 +1,7 @@
 /**
  * FetchBrain SDK Types
  *
- * Type definitions for the FetchBrain AI-powered scraping optimization SDK.
+ * Type definitions for the FetchBrain SDK — memory for your scrapers.
  */
 
 /** How far back the brain recalls: fresh=1h, recent=24h, standard=7d, deep=30d */
@@ -18,12 +18,12 @@ export interface FetchBrainConfig {
   /** How far back the brain recalls: fresh=1h, recent=24h, standard=7d, deep=30d */
   memory?: MemoryDepth;
 
-  /** Whether AI should learn from new pages */
+  /** Teach the brain from scraped data (default: true) */
   learning?: boolean;
 
   /**
-   * Control which handlers run when AI knows the page.
-   * - false: Auto-skip all handlers when AI knows (default)
+   * Control which handlers run when the brain knows the request.
+   * - false: Auto-skip all handlers when the request is known (default)
    * - true: Always run all handlers
    * - string[]: Only run handlers with these labels (e.g., ['listing', 'category'])
    * - 'default': Only run the default handler
@@ -56,8 +56,8 @@ export interface FetchBrainConfig {
    * Crawlee's context-level `enqueueLinks()` and context `addRequests()` reach the queue
    * via other paths and are not pre-recalled (they still get handler-time recall) — in a
    * handler, enqueue follow-ups with `context.crawler.addRequests([...])` instead.
-   * Note recall usage is metered at enqueue time, so requests the queue later dedups
-   * still count as queries. The recall result is a snapshot as of enqueue: data learned
+   * Note known recalls are counted at enqueue time, so known requests the queue later
+   * dedups still count as recalls. The recall result is a snapshot as of enqueue: data learned
    * between enqueue and execution is not picked up (the request is simply scraped and
    * re-learned). If a request skipped its fetch but its remembered data expired before
    * execution (e.g. across a process restart), it fails once without retries and lands
@@ -73,12 +73,12 @@ export interface FetchBrainConfig {
    * Called whenever recalled data is delivered in place of a live scrape — the handler
    * was auto-skipped and the remembered data pushed, or your handler called
    * `context.brain.use()`. Use it for per-record bookkeeping that normally lives in your
-   * handler — e.g. platform billing events. Errors are swallowed: a hook failure never
+   * handler — e.g. metrics or counters. Errors are swallowed: a hook failure never
    * breaks the crawl.
    */
   onRecalled?: (event: RecalledEvent) => void | Promise<void>;
 
-  /** Custom data extractor for learning */
+  /** Transform each pushed record before the brain learns it */
   extractForLearning?: (data: unknown) => Record<string, unknown>;
 
   /**
@@ -99,8 +99,8 @@ export interface FetchBrainConfig {
   debug?: boolean;
 
   /**
-   * Field name to use as URL for learning
-   * Useful when request URL is an API endpoint but data contains the actual page URL
+   * Field name to use as URL for learning.
+   * Note: accepted and stored, but not currently applied by the SDK.
    */
   learnUrlField?: string;
 
@@ -115,9 +115,9 @@ export interface FetchBrainConfig {
   circuitBreaker?: Partial<CircuitBreakerConfig>;
 
   /**
-   * Telemetry configuration - opt-in anonymous data sharing
-   * Helps improve proxy recommendations, detect blocks, optimize configs
-   * Default: disabled
+   * Telemetry configuration — opt-in, pseudonymous (sent with your API key).
+   * Helps improve proxy recommendations, detect blocks, optimize configs.
+   * Default: disabled. See the README "Telemetry (opt-in)" section for every field sent.
    */
   telemetry?: TelemetryConfig;
 }
@@ -182,7 +182,7 @@ export interface StatsResponse {
   period: string;
 }
 
-/** Result from AI knowledge recall */
+/** Result of a recall */
 export interface RecallResult {
   known: boolean;
   data?: Record<string, unknown>;
@@ -190,7 +190,7 @@ export interface RecallResult {
   fallback?: boolean; // True if circuit breaker triggered fallback
 }
 
-/** Response from a natural-language ask against learned knowledge */
+/** Response from a natural-language ask, answered from everything the account has learned */
 export interface AskResponse {
   sources: { score: number; url?: string; data: unknown }[];
   answer?: string;
@@ -252,48 +252,50 @@ export interface Logger {
 // =============================================================================
 
 /**
- * Telemetry configuration - opt-in data sharing for AI improvements
+ * Telemetry configuration — opt-in, pseudonymous diagnostics sent with your API key.
+ * When enabled, each sub-flag defaults to true.
  */
 export interface TelemetryConfig {
-  /** Enable telemetry collection (default: false — opt in to join the access-intelligence network) */
+  /** Enable telemetry collection (default: false — opt-in) */
   enabled: boolean;
 
-  /** Share performance metrics: response times, retries, status codes */
+  /** Share performance metrics: timings, retries, status codes, content size (default: true) */
   sharePerformance?: boolean;
 
-  /** Share proxy info: country, type (never IP addresses) */
+  /** Share proxy info: country, locally-derived type, success (never proxy URL/IP) (default: true) */
   shareProxyInfo?: boolean;
 
-  /** Share site patterns: block rates, rate limits detected */
+  /** Share block indicators derived from status codes and error categories (default: true) */
   shareSitePatterns?: boolean;
 }
 
 /**
- * Telemetry data collected from Crawlee context
- * All data is sanitized - no PII, no credentials, no raw content
+ * Telemetry data collected from Crawlee context.
+ * No raw URLs, bodies, proxy URLs/IPs or error messages. The hostname, generalized
+ * path and request label are sent as-is, linked to your API key.
  */
 export interface TelemetryData {
-  // Request identification (hashed, not raw)
-  domain: string; // e.g., "walmart.com"
-  urlHash: string; // SHA256 of full URL
-  urlPattern?: string; // e.g., "/ip/*" (generalized path)
+  // Request identification
+  domain: string; // URL hostname, plain text, e.g. "shop.example.com"
+  urlHash: string; // First 16 hex chars of an unsalted SHA-256 of the full URL (incl. query)
+  urlPattern?: string; // e.g. "/product/*" — numeric/UUID/20+ char segments replaced; other segments as-is
 
   // Performance metrics
-  responseTimeMs?: number; // Time to first byte
-  totalTimeMs?: number; // Total request time
+  responseTimeMs?: number; // ms from when the SDK starts handling the request (incl. recall) until the handler finishes or the request fails
+  totalTimeMs?: number; // Same span as responseTimeMs
   statusCode?: number; // HTTP status
   contentSize?: number; // Response size in bytes
   retryCount?: number; // Number of retries for this request
 
-  // Proxy information (anonymized)
+  // Proxy information (no proxy URL or IP)
   proxyCountry?: string; // e.g., "US"
   proxyType?: string; // "datacenter" | "residential" | "mobile"
   proxySuccess?: boolean; // Did this proxy work?
 
-  // Session state (aggregates only)
-  sessionAge?: number; // Requests in current session
-  sessionErrorScore?: number; // Error rate 0-1
-  cookieCount?: number; // Number of cookies (not values)
+  // Session state
+  sessionAge?: number; // Crawlee session usage count (success entries only)
+  sessionErrorScore?: number; // Crawlee session error score
+  cookieCount?: number; // Not currently collected (never populated)
 
   // Blocking indicators
   blocked?: boolean; // Request was blocked

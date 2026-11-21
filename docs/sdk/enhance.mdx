@@ -1,6 +1,6 @@
 ---
 title: FetchBrain.enhance
-description: "Wrap a Crawlee crawler with a shared memory pool"
+description: "Wrap a Crawlee crawler with FetchBrain's memory"
 ---
 
 ## Overview
@@ -51,7 +51,7 @@ interface FetchBrainConfig {
   // Advanced
   batch?: Partial<BatchConfig>; // Request batching tuning
   circuitBreaker?: Partial<CircuitBreakerConfig>; // Graceful-degradation tuning
-  telemetry?: TelemetryConfig; // Opt-in anonymous telemetry
+  telemetry?: TelemetryConfig; // Opt-in, pseudonymous telemetry
 }
 ```
 
@@ -90,7 +90,7 @@ interface FetchBrainConfig {
 </ParamField>
 
 <ParamField body="refreshOnRebuild" type="boolean" default="false">
-  Only reuse knowledge learned by the current build (auto-detected from the
+  Only recall memory learned by the current build (auto-detected from the
   platform's native build identifier). When a scraper is rebuilt, it re-scrapes
   instead of returning stale data.
 </ParamField>
@@ -124,9 +124,11 @@ interface FetchBrainConfig {
 </ParamField>
 
 <ParamField body="telemetry" type="object">
-  Opt-in anonymized telemetry (`{ enabled: true }`), off by default. No raw
-  URLs, bodies, cookies, IPs, or PII are ever sent. See
-  [Telemetry](/docs/advanced/telemetry).
+  Opt-in telemetry (`{ enabled: true }`), off by default. Pseudonymous, not
+  anonymous: it's sent with your API key and includes the hostname in plain
+  text. See [Telemetry](/docs/advanced/telemetry) and the SDK README's
+  [Telemetry section](https://github.com/fetchbrain-com/sdk#telemetry-opt-in),
+  the disclosure of record.
 </ParamField>
 
 ## Supported Crawlers
