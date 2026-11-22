@@ -48,6 +48,8 @@ class ApiError extends Error {
     statusText: string,
     /** Machine-readable `error` code from the API's response body, if any. */
     public readonly serverError?: string,
+    /** Specific rejection reason (`details.code ?? code`), e.g. LEARN_CAP_EXCEEDED. */
+    public readonly code?: string,
   ) {
     super(`API error: ${status} ${statusText}`);
     this.name = "ApiError";
@@ -97,6 +99,8 @@ export class FetchBrainClient {
   private batcher: RequestBatcher;
   private learnBatcher: LearnBatcher;
   private logger: Logger;
+  /** Set once the API reports the monthly learn cap; learns stop for this client. */
+  private learnCapReached = false;
 
   constructor(config: FetchBrainConfig) {
     this.config = {
@@ -198,12 +202,15 @@ export class FetchBrainClient {
     if (!this.config.learning) {
       return { status: "rejected", learned: 0 };
     }
-    if (this.circuitBreaker.isOpen()) {
+    if (this.learnCapReached || this.circuitBreaker.isOpen()) {
       return { status: "rejected", learned: 0 };
     }
     try {
       return await this.learnBatcher.learn(request, data);
     } catch (error) {
+      if (error instanceof ApiError && error.code === "LEARN_CAP_EXCEEDED") {
+        return { status: "rejected", learned: 0 };
+      }
       this.logger.warn("Learn failed:", error);
       return { status: "rejected", learned: 0 };
     }
@@ -373,6 +380,19 @@ export class FetchBrainClient {
       this.circuitBreaker.recordSuccess();
       return response;
     } catch (error) {
+      // A 4xx is the learn being refused (cap reached, invalid entry), not the
+      // API degrading — tripping the breaker here would also stop RECALLS for
+      // every request sharing this client, so the crawl would re-scrape pages
+      // FetchBrain already knows.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        if (error.code === "LEARN_CAP_EXCEEDED" && !this.learnCapReached) {
+          this.learnCapReached = true;
+          this.logger.warn(
+            "FetchBrain monthly learning limit reached — learning is paused for this run; recall keeps working. The limit resets on the 1st (UTC).",
+          );
+        }
+        throw error;
+      }
       this.circuitBreaker.recordFailure();
       throw error;
     }
@@ -434,13 +454,20 @@ export class FetchBrainClient {
 
       if (!response.ok) {
         let serverError: string | undefined;
+        let code: string | undefined;
         try {
-          const errBody = (await response.json()) as { error?: unknown };
+          const errBody = (await response.json()) as {
+            error?: unknown;
+            code?: unknown;
+            details?: { code?: unknown };
+          };
           if (typeof errBody.error === "string") serverError = errBody.error;
+          const specific = errBody.details?.code ?? errBody.code;
+          if (typeof specific === "string") code = specific;
         } catch {
           // Non-JSON error body — no machine-readable code to carry.
         }
-        throw new ApiError(response.status, response.statusText, serverError);
+        throw new ApiError(response.status, response.statusText, serverError, code);
       }
 
       return (await response.json()) as T;

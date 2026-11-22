@@ -23,6 +23,12 @@ export interface MockFetchBrainOptions {
   failureRate?: number;
   /** Simulated latency in ms */
   latency?: number;
+  /**
+   * Simulate the monthly fair-use learn cap: once this many entries are
+   * learned, further learns are rejected (like the real client after a
+   * LEARN_CAP_EXCEEDED response) while recall keeps working.
+   */
+  learnCap?: number;
 }
 
 /**
@@ -101,6 +107,10 @@ export class MockFetchBrain {
 
     if (this.shouldFail()) {
       throw new Error("Simulated API failure");
+    }
+
+    if (this.options.learnCap !== undefined && this._stats.learned >= this.options.learnCap) {
+      return { learned: 0, status: "rejected" };
     }
 
     this.knowledge.set(deriveIdentity(request), {
