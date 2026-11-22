@@ -80,19 +80,31 @@ describe("learn cap / learn 4xx handling", () => {
     vi.useRealTimers();
   });
 
-  it("only a 403 carries the cap signal (same code on another status is ignored)", async () => {
-    const a = api(() => new Response(capBody, { status: 400 }));
+  it("the cap code pauses learning whatever 4xx status carries it", async () => {
+    const a = api(() => new Response(capBody, { status: 429 }));
     const c = newClient();
     await c.learn({ url: "https://p/1" }, {});
     await c.learn({ url: "https://p/2" }, {});
-    expect(a.learnCalls()).toBe(2);
+    expect(a.learnCalls()).toBe(1);
+    expect(c.getCircuitState()).toMatchObject({ state: "closed", failures: 0 });
   });
 
-  it("a learn 429 is back-pressure: it still counts toward the breaker", async () => {
-    api(() => new Response(JSON.stringify({ error: "slow down" }), { status: 429 }));
+  it("a learn 429 pauses learns for Retry-After, never trips the recall breaker", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-22T10:00:00Z"));
+    const a = api(() =>
+      new Response(JSON.stringify({ error: "slow down" }), { status: 429, headers: { "Retry-After": "10" } }),
+    );
     const c = newClient();
-    for (let i = 0; i < 3; i++) await c.learn({ url: `https://p/${i}` }, { i });
-    expect(c.getCircuitState()).toMatchObject({ state: "open" });
+    for (let i = 0; i < 4; i++) await c.learn({ url: `https://p/${i}` }, { i });
+    expect(a.learnCalls()).toBe(1); // paused after the first 429
+    expect(c.getCircuitState()).toMatchObject({ state: "closed", failures: 0 });
+    await c.recall({ url: "https://p/r" });
+    expect(a.calls).toContain("/v1/recall");
+    vi.setSystemTime(new Date("2026-11-22T10:00:11Z"));
+    await c.learn({ url: "https://p/later" }, {});
+    expect(a.learnCalls()).toBe(2); // pause lifted
+    vi.useRealTimers();
   });
 
   it("a learn 5xx still trips the breaker", async () => {

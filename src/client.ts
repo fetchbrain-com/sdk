@@ -50,6 +50,8 @@ class ApiError extends Error {
     public readonly serverError?: string,
     /** Specific rejection reason (`details.code ?? code`), e.g. LEARN_CAP_EXCEEDED. */
     public readonly code?: string,
+    /** Seconds from a `Retry-After` header, when the API sent one. */
+    public readonly retryAfterSec?: number,
   ) {
     super(`API error: ${status} ${statusText}`);
     this.name = "ApiError";
@@ -383,18 +385,23 @@ export class FetchBrainClient {
       this.circuitBreaker.recordSuccess();
       return response;
     } catch (error) {
-      // A 4xx is the learn being refused (cap reached, invalid entry), not the
-      // API degrading — tripping the breaker here would also stop RECALLS for
-      // every request sharing this client, so the crawl would re-scrape pages
-      // FetchBrain already knows. 429 is the exception: that IS back-pressure,
-      // so it still counts toward the breaker like a 5xx.
-      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 429) {
-        if (error.status === 403 && error.code === "LEARN_CAP_EXCEEDED" && Date.now() >= this.learnPausedUntil) {
-          const now = new Date();
-          this.learnPausedUntil = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
-          this.logger.warn(
-            "FetchBrain monthly learning limit reached — learning is paused until the 1st (UTC); recall keeps working.",
-          );
+      // A 4xx is the learn being refused (cap reached, rate-limited, invalid
+      // entry), not the API degrading — tripping the shared breaker here would
+      // also stop RECALLS, so the crawl would re-scrape pages FetchBrain
+      // already knows. Back-pressure is handled with a learn-only pause instead.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        if (error.code === "LEARN_CAP_EXCEEDED") {
+          if (Date.now() >= this.learnPausedUntil) {
+            const now = new Date();
+            this.learnPausedUntil = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+            this.logger.warn(
+              "FetchBrain monthly learning limit reached — learning is paused until the 1st (UTC); recall keeps working.",
+            );
+          }
+        } else if (error.status === 429) {
+          const waitMs = Math.min(Math.max(error.retryAfterSec ?? 30, 1), 3600) * 1000;
+          this.learnPausedUntil = Math.max(this.learnPausedUntil, Date.now() + waitMs);
+          this.logger.debug(`Learn rate-limited; pausing learns for ${waitMs / 1000}s`);
         }
         throw error;
       }
@@ -472,7 +479,14 @@ export class FetchBrainClient {
         } catch {
           // Non-JSON error body — no machine-readable code to carry.
         }
-        throw new ApiError(response.status, response.statusText, serverError, code);
+        const retryAfter = Number(response.headers.get("Retry-After"));
+        throw new ApiError(
+          response.status,
+          response.statusText,
+          serverError,
+          code,
+          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+        );
       }
 
       return (await response.json()) as T;
