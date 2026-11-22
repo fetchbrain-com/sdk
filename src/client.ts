@@ -58,6 +58,17 @@ class ApiError extends Error {
   }
 }
 
+/** `Retry-After` as seconds: delta-seconds or an HTTP-date (RFC 9110). */
+export function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const secs = Number(header);
+  if (Number.isFinite(secs)) return secs > 0 ? secs : undefined;
+  const at = Date.parse(header);
+  if (Number.isNaN(at)) return undefined;
+  const delta = (at - Date.now()) / 1000;
+  return delta > 0 ? delta : undefined;
+}
+
 /**
  * Scrape context sent with API requests
  */
@@ -106,6 +117,8 @@ export class FetchBrainClient {
    * learn cap — the start of the next UTC month, when the cap resets. 0 = not paused.
    */
   private learnPausedUntil = 0;
+  /** Warn about the learn cap once per pause, independent of the pause state. */
+  private learnCapWarnedUntil = 0;
 
   constructor(config: FetchBrainConfig) {
     this.config = {
@@ -391,9 +404,12 @@ export class FetchBrainClient {
       // already knows. Back-pressure is handled with a learn-only pause instead.
       if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
         if (error.code === "LEARN_CAP_EXCEEDED") {
-          if (Date.now() >= this.learnPausedUntil) {
-            const now = new Date();
-            this.learnPausedUntil = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+          const now = new Date();
+          const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+          // Always extend (a shorter 429 pause may already be active).
+          this.learnPausedUntil = Math.max(this.learnPausedUntil, monthStart);
+          if (this.learnCapWarnedUntil < monthStart) {
+            this.learnCapWarnedUntil = monthStart;
             this.logger.warn(
               "FetchBrain monthly learning limit reached — learning is paused until the 1st (UTC); recall keeps working.",
             );
@@ -479,13 +495,12 @@ export class FetchBrainClient {
         } catch {
           // Non-JSON error body — no machine-readable code to carry.
         }
-        const retryAfter = Number(response.headers.get("Retry-After"));
         throw new ApiError(
           response.status,
           response.statusText,
           serverError,
           code,
-          Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+          parseRetryAfter(response.headers.get("Retry-After")),
         );
       }
 

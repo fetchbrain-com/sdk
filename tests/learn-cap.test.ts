@@ -5,7 +5,7 @@
  * learns for the rest of its life, warns once, and keeps recalling.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { FetchBrainClient } from "../src/client";
+import { FetchBrainClient, parseRetryAfter } from "../src/client";
 
 const capBody = JSON.stringify({
   error: "Monthly learning limit reached.",
@@ -105,6 +105,33 @@ describe("learn cap / learn 4xx handling", () => {
     await c.learn({ url: "https://p/later" }, {});
     expect(a.learnCalls()).toBe(2); // pause lifted
     vi.useRealTimers();
+  });
+
+  it("the cap extends an active, shorter 429 pause to the month start", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-22T10:00:00Z"));
+    let n = 0;
+    const a = api(() =>
+      n++ === 0
+        ? new Response(JSON.stringify({ error: "slow" }), { status: 429, headers: { "Retry-After": "5" } })
+        : new Response(capBody, { status: 403 }),
+    );
+    const c = newClient();
+    await c.learn({ url: "https://p/1" }, {}); // 429 → 5s pause
+    vi.setSystemTime(new Date("2026-11-22T10:00:06Z"));
+    await c.learn({ url: "https://p/2" }, {}); // cap
+    vi.setSystemTime(new Date("2026-11-25T00:00:00Z"));
+    await c.learn({ url: "https://p/3" }, {});
+    expect(a.learnCalls()).toBe(2); // still paused days later
+    vi.useRealTimers();
+  });
+
+  it("parseRetryAfter handles delta-seconds and HTTP-dates", () => {
+    expect(parseRetryAfter("120")).toBe(120);
+    expect(parseRetryAfter(null)).toBeUndefined();
+    expect(parseRetryAfter("soon")).toBeUndefined();
+    const inAMinute = new Date(Date.now() + 60_000).toUTCString();
+    expect(parseRetryAfter(inAMinute)).toBeGreaterThan(50);
   });
 
   it("a learn 5xx still trips the breaker", async () => {
