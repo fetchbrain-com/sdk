@@ -20,6 +20,9 @@ import type {
 } from "../types";
 
 const app = express();
+
+/** Optional fair-use learn cap to exercise LEARN_CAP_EXCEEDED handling (FB_MOCK_LEARN_CAP=N). */
+const LEARN_CAP = process.env.FB_MOCK_LEARN_CAP ? Number(process.env.FB_MOCK_LEARN_CAP) : undefined;
 app.use(express.json());
 
 const ALL_MEMORY_DEPTHS: MemoryDepth[] = ["fresh", "recent", "standard", "deep"];
@@ -159,6 +162,14 @@ app.post("/v1/learn", (req, res) => {
 
   if (!entries || !Array.isArray(entries)) {
     return res.status(400).json({ error: "entries array is required" });
+  }
+
+  if (LEARN_CAP !== undefined && stats.learned >= LEARN_CAP) {
+    return res.status(403).json({
+      error: "Monthly learning limit reached. It resets on the 1st of the month (UTC).",
+      code: "FORBIDDEN",
+      details: { code: "LEARN_CAP_EXCEEDED" },
+    });
   }
 
   let learned = 0;

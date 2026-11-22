@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Hitting the monthly learning limit (or any other learn rejection) no longer trips the
+  circuit breaker, so recall keeps working for the rest of the crawl. The SDK pauses
+  learning until the 1st (UTC) and logs one warning; learn 429s back off learns only.
+  `MockFetchBrain` gains a `learnCap` option (and the mock server `FB_MOCK_LEARN_CAP`).
+
 ### Docs
 - README telemetry disclosure corrected to match the code: telemetry is pseudonymous
   (sent with your API key), the hostname is sent in plain text, the URL hash is a

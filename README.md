@@ -610,11 +610,13 @@ console.log(answer.sources);
 
 `initialMemory` replaces the older `initialKnowledge` option (still
 accepted, deprecated), and `getMemorySize()` replaces `getKnowledgeSize()`.
+Pass `learnCap: N` to make the mock reject learns after N entries, to test
+how your crawl behaves at the monthly learning limit.
 
 If you clone this repository, there's also a local mock **server**
 (`npm run mock-server`) for running real crawlers against
-`http://localhost:3456` without an API key. It isn't included in the npm
-package.
+`http://localhost:3456` without an API key (set `FB_MOCK_LEARN_CAP=N` to
+simulate the learning limit). It isn't included in the npm package.
 
 ## Examples
 
