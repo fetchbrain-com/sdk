@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildNativeContext, getPlatformBuildId } from "../src/native-context";
+import { buildNativeContext, getPlatformBuildId, normalizeScraperName } from "../src/native-context";
 
 describe("getPlatformBuildId", () => {
   it("returns the platform build identifier", () => {
@@ -122,5 +122,38 @@ describe("buildNativeContext", () => {
     const keys = Object.keys(JSON.parse(header!));
     expect(keys.length).toBeGreaterThan(0);
     expect(keys).toEqual([...keys].sort());
+  });
+});
+
+describe("scraper name (FETCHBRAIN_SCRAPER_ID)", () => {
+  it("normalizes valid names and rejects invalid ones", () => {
+    expect(normalizeScraperName(" Shop-A ")).toBe("shop-a");
+    for (const bad of [undefined, "", "_default", "has space", "a/b", "a".repeat(65)]) {
+      expect(normalizeScraperName(bad)).toBeUndefined();
+    }
+  });
+
+  it("puts the name first in the header", () => {
+    const header = buildNativeContext({ A_ID: "x" }, "shop-a");
+    expect(Object.keys(JSON.parse(header!))[0]).toBe("FETCHBRAIN_SCRAPER_ID");
+  });
+
+  it("keeps the name even when many long *_ID vars exhaust the header budget", () => {
+    const env: Record<string, string> = {};
+    for (let i = 0; i < 60; i++) env[`A_${String(i).padStart(2, "0")}_ID`] = "v".repeat(200);
+    env.FETCHBRAIN_SCRAPER_ID = "shop-a";
+    const header = buildNativeContext(env);
+    expect(header!.length).toBeLessThanOrEqual(2048);
+    expect(JSON.parse(header!).FETCHBRAIN_SCRAPER_ID).toBe("shop-a");
+  });
+
+  it("config name wins over the env var, normalized", () => {
+    const header = buildNativeContext({ FETCHBRAIN_SCRAPER_ID: "from-env" }, "From-Config");
+    expect(JSON.parse(header!).FETCHBRAIN_SCRAPER_ID).toBe("from-config");
+  });
+
+  it("omits an invalid name instead of forwarding it", () => {
+    expect(buildNativeContext({ FETCHBRAIN_SCRAPER_ID: "_default" })).toBeUndefined();
+    expect(buildNativeContext({}, "has space")).toBeUndefined();
   });
 });

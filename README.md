@@ -171,8 +171,8 @@ Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES �
 
 Memory is always private to your account. Within it, scoping depends on
 where the scraper runs ([details](#do-my-scrapers-share-memory)): on Apify
-each actor has its own memory; everywhere else, all scrapers under one API
-key share one memory.
+each actor has its own memory; everywhere else, scrapers share one default
+memory unless you [name them](#name-your-scraper-scraper).
 
 ### Memory depth
 
@@ -243,6 +243,7 @@ interface FetchBrainConfig {
   apiKey: string;
 
   // Optional
+  scraper?: string; // Name this scraper so it gets its own memory (or set FETCHBRAIN_SCRAPER_ID)
   baseUrl?: string; // API URL (default: https://api.fetchbrain.com)
   memory?: MemoryDepth; // How far back the brain recalls (default: "recent")
   learning?: boolean; // Teach the brain from scraped data (default: true)
@@ -264,6 +265,30 @@ interface FetchBrainConfig {
   debug?: boolean; // Enable debug logging (default: false)
 }
 ```
+
+### Name your scraper (`scraper`)
+
+Memory is private to your account. Outside Apify, every scraper on the
+account shares one default memory unless you name it:
+
+```typescript
+FetchBrain.enhance(crawler, { apiKey, scraper: "shop-a" });
+// or, with no code change: FETCHBRAIN_SCRAPER_ID=shop-a node crawl.js
+```
+
+- A named scraper learns and recalls only its own memory, so `shop-a` and
+  `shop-b` never see each other's pages.
+- Names use lowercase letters, digits, `.`, `_` and `-`, up to 64 characters,
+  and can't start with `_`. Uppercase is lowercased. An invalid name is ignored
+  with a warning, and that scraper keeps using the default memory.
+- A new name starts empty. What you learned before naming stays in the default
+  memory, which unnamed scrapers keep using.
+- On Apify, memory is already per actor. Setting a name there replaces the
+  actor id, so that actor's existing memory goes cold.
+- The `scraper` option wins over the environment variable. SDK 0.3.0 and later
+  also forward `FETCHBRAIN_SCRAPER_ID`, but before this release only on a
+  best-effort basis: many other `*_ID` variables can push it out of the
+  header. Upgrade to guarantee delivery.
 
 ### Recall at enqueue time (`preRecall`)
 
@@ -493,7 +518,8 @@ Every API call (recall, learn, ask, stats, telemetry) sends these headers:
 | `X-FB-Label` | the request's Crawlee label, while a request is being handled |
 
 `X-FB-Context` carries your platform identifiers; the API uses
-`APIFY_ACTOR_ID` from it to scope memory per Apify actor (other `*_ID`
+`FETCHBRAIN_SCRAPER_ID` (your scraper name, sent first) and otherwise
+`APIFY_ACTOR_ID` from it to scope memory per scraper (other `*_ID`
 variables do not affect scoping) and `*BUILD_ID` for `refreshOnRebuild`. It includes
 every environment variable whose name ends in `_ID`, plus `NODE_ENV`,
 `REGION` and `CI`, except names containing `TOKEN`, `SECRET`, `PASSWORD`,
@@ -632,8 +658,10 @@ simulate the learning limit). It isn't included in the npm package.
 It depends on where they run. Memory is always private to your account.
 - **On Apify**, each actor (`APIFY_ACTOR_ID`) has its own memory: recall and
   SDK `ask()` calls from inside an actor only see what that actor learned.
-- **Everywhere else**, all scrapers using the same API key share one memory —
-  scraper A can recall what scraper B learned.
+- **Everywhere else**, scrapers share one default memory, so scraper A can
+  recall what scraper B learned, unless you name them with `scraper` /
+  `FETCHBRAIN_SCRAPER_ID` (see [Name your scraper](#name-your-scraper-scraper)).
+- **A named scraper** (anywhere, including Apify) only sees its own memory.
 - **Ask Your Brain in the dashboard** (and `ask()` calls with no platform
   context) answers across everything your account has indexed.
 

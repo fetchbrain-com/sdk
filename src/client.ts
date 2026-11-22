@@ -17,7 +17,7 @@ import type {
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
 import { createLogger } from "./logger";
-import { buildNativeContext, getPlatformBuildId } from "./native-context";
+import { buildNativeContext, getPlatformBuildId, normalizeScraperName, SCRAPER_NAME_VAR } from "./native-context";
 
 const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
@@ -101,12 +101,12 @@ export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper"
     >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
@@ -138,9 +138,18 @@ export class FetchBrainClient {
       skipLabels: config.skipLabels, // enhance-only; stored so getConfig() round-trips
       preRecall: config.preRecall, // enhance-only; stored so getConfig() round-trips
       onRecalled: config.onRecalled, // enhance-only; stored so getConfig() round-trips
+      scraper: config.scraper,
     };
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);
+
+    // Scraper name: invalid values are dropped (never thrown) — see native-context.
+    const rawScraper = this.config.scraper ?? process.env[SCRAPER_NAME_VAR];
+    if (rawScraper !== undefined && rawScraper !== "" && !normalizeScraperName(rawScraper)) {
+      this.logger.warn(
+        "FetchBrain: ignoring invalid scraper name; use lowercase letters, digits, '.', '_' or '-' (max 64, not starting with '_')",
+      );
+    }
 
     this.circuitBreaker = new CircuitBreaker(
       this.config.circuitBreaker,
@@ -455,7 +464,7 @@ export class FetchBrainClient {
     }
 
     // Native platform context (allowlisted env vars, picked apart server-side)
-    const nativeContext = buildNativeContext();
+    const nativeContext = buildNativeContext(process.env, this.config.scraper);
     if (nativeContext) {
       contextHeaders["X-FB-Context"] = nativeContext;
     }

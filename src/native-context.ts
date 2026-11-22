@@ -24,29 +24,50 @@ const CREDENTIAL_VALUE =
 const MAX_VALUE_LENGTH = 256;
 const MAX_HEADER_LENGTH = 2048;
 
+/** Env var (and header key) carrying a user-chosen scraper name. */
+export const SCRAPER_NAME_VAR = "FETCHBRAIN_SCRAPER_ID";
+
+/**
+ * Scraper names: lowercase letters, digits, '.', '_', '-'; max 64; not
+ * starting with '_' (reserved for the shared default memory). Mirrors the API.
+ */
+const SCRAPER_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+
+/** Normalize a scraper name (trim + lowercase); invalid names yield undefined. */
+export function normalizeScraperName(raw?: string): string | undefined {
+  const name = raw?.trim().toLowerCase();
+  return name && SCRAPER_NAME.test(name) ? name : undefined;
+}
+
 /**
  * Collect native running context into a JSON header value.
  * Forwards only platform-identity-shaped names (ALLOWED_NAME) that are
  * not credential-shaped in name (DENYLIST) or value (CREDENTIAL_VALUE).
+ * A valid scraper name (`scraper`, else the FETCHBRAIN_SCRAPER_ID env var)
+ * goes in first so the header budget can never drop it; an invalid one is omitted.
  * Returns undefined when there is nothing to send.
  */
 export function buildNativeContext(
   env: Record<string, string | undefined> = process.env,
+  scraper?: string,
 ): string | undefined {
   const context: Record<string, string> = {};
 
+  const name = normalizeScraperName(scraper ?? env[SCRAPER_NAME_VAR]);
+  if (name) context[SCRAPER_NAME_VAR] = name;
+
   const names = Object.keys(env)
-    .filter((name) => ALLOWED_NAME.test(name) && !DENYLIST.test(name))
+    .filter((n) => n !== SCRAPER_NAME_VAR && ALLOWED_NAME.test(n) && !DENYLIST.test(n))
     .sort();
 
-  for (const name of names) {
-    const value = env[name];
+  for (const varName of names) {
+    const value = env[varName];
     if (!value || value.length > MAX_VALUE_LENGTH) continue;
     if (CREDENTIAL_VALUE.test(value)) continue;
 
-    const candidate = { ...context, [name]: value };
+    const candidate = { ...context, [varName]: value };
     if (JSON.stringify(candidate).length > MAX_HEADER_LENGTH) break;
-    context[name] = value;
+    context[varName] = value;
   }
 
   if (Object.keys(context).length === 0) return undefined;
