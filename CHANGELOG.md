@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-22
+
 ### Fixed
 - Hitting the monthly learning limit (or any other learn rejection) no longer trips the
   circuit breaker, so recall keeps working for the rest of the crawl. The SDK pauses
