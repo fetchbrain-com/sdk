@@ -17,7 +17,7 @@ import type {
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
 import { createLogger } from "./logger";
-import { buildNativeContext, getPlatformBuildId } from "./native-context";
+import { buildNativeContext, getPlatformBuildId, resolveScraperName } from "./native-context";
 
 const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
@@ -101,12 +101,12 @@ export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper"
     >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
@@ -119,6 +119,8 @@ export class FetchBrainClient {
   private learnPausedUntil = 0;
   /** Warn about the learn cap once per pause, independent of the pause state. */
   private learnCapWarnedUntil = 0;
+  /** Valid, normalized scraper name (option, else env var); undefined = default memory. */
+  private scraperName: string | undefined;
 
   constructor(config: FetchBrainConfig) {
     this.config = {
@@ -138,9 +140,21 @@ export class FetchBrainClient {
       skipLabels: config.skipLabels, // enhance-only; stored so getConfig() round-trips
       preRecall: config.preRecall, // enhance-only; stored so getConfig() round-trips
       onRecalled: config.onRecalled, // enhance-only; stored so getConfig() round-trips
+      scraper: config.scraper,
     };
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);
+
+    // Scraper name, resolved once: invalid values are dropped (never thrown).
+    const scraper = resolveScraperName(config.scraper);
+    this.scraperName = scraper.name;
+    for (const source of scraper.rejected) {
+      this.logger.warn(
+        `ignoring invalid scraper name from ${source === "option" ? "the scraper option" : source}; ` +
+          "use 1-64 lowercase letters, digits, '.', '_' or '-', starting with a letter or digit. " +
+          (scraper.name ? `Using "${scraper.name}" instead.` : "This scraper uses the shared default memory."),
+      );
+    }
 
     this.circuitBreaker = new CircuitBreaker(
       this.config.circuitBreaker,
@@ -455,7 +469,7 @@ export class FetchBrainClient {
     }
 
     // Native platform context (allowlisted env vars, picked apart server-side)
-    const nativeContext = buildNativeContext();
+    const nativeContext = buildNativeContext(process.env, this.scraperName);
     if (nativeContext) {
       contextHeaders["X-FB-Context"] = nativeContext;
     }
