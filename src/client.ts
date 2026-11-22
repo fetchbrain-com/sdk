@@ -99,8 +99,11 @@ export class FetchBrainClient {
   private batcher: RequestBatcher;
   private learnBatcher: LearnBatcher;
   private logger: Logger;
-  /** Set once the API reports the monthly learn cap; learns stop for this client. */
-  private learnCapReached = false;
+  /**
+   * Epoch ms until which learns are paused after the API reported the monthly
+   * learn cap — the start of the next UTC month, when the cap resets. 0 = not paused.
+   */
+  private learnPausedUntil = 0;
 
   constructor(config: FetchBrainConfig) {
     this.config = {
@@ -202,7 +205,7 @@ export class FetchBrainClient {
     if (!this.config.learning) {
       return { status: "rejected", learned: 0 };
     }
-    if (this.learnCapReached || this.circuitBreaker.isOpen()) {
+    if (Date.now() < this.learnPausedUntil || this.circuitBreaker.isOpen()) {
       return { status: "rejected", learned: 0 };
     }
     try {
@@ -383,12 +386,14 @@ export class FetchBrainClient {
       // A 4xx is the learn being refused (cap reached, invalid entry), not the
       // API degrading — tripping the breaker here would also stop RECALLS for
       // every request sharing this client, so the crawl would re-scrape pages
-      // FetchBrain already knows.
-      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
-        if (error.code === "LEARN_CAP_EXCEEDED" && !this.learnCapReached) {
-          this.learnCapReached = true;
+      // FetchBrain already knows. 429 is the exception: that IS back-pressure,
+      // so it still counts toward the breaker like a 5xx.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 429) {
+        if (error.status === 403 && error.code === "LEARN_CAP_EXCEEDED" && Date.now() >= this.learnPausedUntil) {
+          const now = new Date();
+          this.learnPausedUntil = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
           this.logger.warn(
-            "FetchBrain monthly learning limit reached — learning is paused for this run; recall keeps working. The limit resets on the 1st (UTC).",
+            "FetchBrain monthly learning limit reached — learning is paused until the 1st (UTC); recall keeps working.",
           );
         }
         throw error;
