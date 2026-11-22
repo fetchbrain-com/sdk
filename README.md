@@ -5,9 +5,9 @@
   <img src="logo/fetchbrain-logo-primary.svg" alt="FetchBrain" width="340">
 </picture>
 
-**Make your scrapers smarter with every run.**
+**Never pay twice for the same page.**
 
-*Your crawler teaches it once. It recalls it on every run after.*
+*Your scraper learns a page once; later runs recall it within your memory depth instead of fetching it again.*
 
 [![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk) [![TypeScript](https://img.shields.io/badge/TypeScript-first-3178C6.svg)](https://www.typescriptlang.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -21,9 +21,9 @@ Every scraping run re-fetches thousands of pages you already scraped last
 time — paying for proxies, browsers, retries, and CAPTCHAs to learn things
 you already know.
 
-FetchBrain gives each of your scrapers a **memory**. Before each request, a
+FetchBrain gives your scrapers a **memory**, private to your account. Before each request, a
 crawler asks *"do I already know this request?"* — known requests come back
-**in milliseconds** without your scraper fetching the page; unknown ones run
+**from memory** without your scraper fetching the page; unknown ones run
 normally and are learned. Memory grows run after run, and `ask()` answers
 plain-English questions from what you've learned — a data asset that
 compounds instead of costs. **Learning is always free.**
@@ -56,7 +56,7 @@ FetchBrain.enhance(crawler, { apiKey: process.env.FETCHBRAIN_API_KEY });
 
 await crawler.run(["https://example.com/"]);
 // Run 1: your scraper fetches the page and teaches your brain
-// Run 2: recalled from memory in milliseconds, no HTTP request to example.com
+// Run 2: recalled from memory, no HTTP request to example.com
 ```
 
 ## One line to adopt
@@ -85,7 +85,7 @@ That's it. Your handler only runs when there's something new to learn.
 
 |  | Without | With FetchBrain |
 | --- | --- | --- |
-| **Repeat requests** | Full fetch, every run | Recalled in milliseconds |
+| **Repeat requests** | Full fetch, every run | Recalled from memory |
 | **Proxy & compute spend** | Pay per fetch, every run | Pay only for what it knows |
 | **Blocks & CAPTCHAs** | Every run risks them | Pre-recalled known requests skip the fetch |
 | **When the service is down** | — | Your crawl runs normally (circuit breaker, 500ms timeout) |
@@ -114,8 +114,8 @@ cost falls as coverage grows — and `ask()` turns what they've collected into
 memory you can ask questions of, with no warehouse to run.
 
 **Product teams & AI agents** — apps and browsing agents that re-hit the same
-requests get them back in milliseconds, straight from memory: no fetch, no
-proxy, no block. The more often a scraper revisits the same requests, the more
+requests get them back straight from memory: known pages you add with
+`crawler.addRequests()` skip the fetch, so they cost no proxy traffic. The more often a scraper revisits the same requests, the more
 its memory pays off.
 
 **Recurring crawls of stable data** — catalogs, specs, listings, company and
@@ -160,7 +160,7 @@ await crawler.run(urls);
 ## How it works
 
 ```
-Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES ──▶ data in milliseconds, no fetch
+Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES ──▶ data from memory, fetch skipped
                                       │
                                       └──▶ NO ──▶ your handler runs ──▶ brain learns, free
 ```
@@ -272,7 +272,7 @@ your request handler runs — so a recall inside the handler is too late to
 save the fetch. With `preRecall` (on by default), the SDK checks the brain
 the moment requests enter the queue: each `crawler.addRequests()` array
 becomes a single bulk recall, known requests are enqueued with Crawlee's
-`skipNavigation` so their fetch never happens, and unknown requests carry
+`skipNavigation` so they're skipped before they're fetched, and unknown requests carry
 their recall result with them so the handler doesn't ask twice. Enqueue in
 batches (one `addRequests` call per page of discovered items) to get the
 most out of it. If the brain is unreachable, requests are enqueued unchanged
