@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Pages that push several records (listings) are now learned as all of their records and
+  recalled as all of them, in order. Previously only one record per request survived.
+- `pushData` no longer waits for the learn round-trip; learns are sent in the background and
+  `run()` still delivers every one before it resolves (no learns lost at shutdown).
+- A request whose handler throws after pushing data is no longer learned.
+- Default `timeout` raised from 500ms to 1500ms. Measured recall answers are 0.2-0.5s plus
+  network, so under concurrency the old value timed out healthy calls and opened the breaker.
+- Account-level 4xx answers (e.g. 403 hard cap) no longer open the circuit breaker, so
+  learns the API would accept still reach it. 5xx and network errors still open it.
+- Seed lists over 500 requests are pre-recalled slice by slice as the crawl runs, so the
+  first request starts immediately and large lists (6000+) no longer evict pre-recalled
+  answers into a second, double-billed recall.
+- A single record over the API's 100KB limit is dropped instead of failing its whole batch.
+
 ## [0.6.0] - 2026-11-22
 
 ### Added

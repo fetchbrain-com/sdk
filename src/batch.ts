@@ -1,4 +1,4 @@
-import type { BatchConfig, RecallResult, Logger, LearnResponse, RawRequest } from "./types";
+import type { BatchConfig, LearnedData, RecallResult, Logger, LearnResponse, RawRequest } from "./types";
 
 const DEFAULT_CONFIG: BatchConfig = {
   maxSize: 50,
@@ -127,7 +127,7 @@ export class RequestBatcher {
 
 interface LearnEntry {
   request: RawRequest;
-  data: Record<string, unknown>;
+  data: LearnedData;
 }
 
 interface PendingLearnRequest {
@@ -136,7 +136,7 @@ interface PendingLearnRequest {
   reject: (error: Error) => void;
 }
 
-type LearnBatchExecutor = (entries: { request: RawRequest; data: Record<string, unknown> }[]) => Promise<LearnResponse>;
+type LearnBatchExecutor = (entries: { request: RawRequest; data: LearnedData }[]) => Promise<LearnResponse>;
 
 /**
  * Learn Request Batcher
@@ -150,6 +150,8 @@ export class LearnBatcher {
   private config: BatchConfig;
   private executor: LearnBatchExecutor;
   private logger: Logger;
+  /** Flushes whose API call has not settled yet (awaited by forceFlush). */
+  private inFlight = new Set<Promise<void>>();
 
   constructor(
     executor: LearnBatchExecutor,
@@ -166,14 +168,14 @@ export class LearnBatcher {
    */
   async learn(
     request: RawRequest,
-    data: Record<string, unknown>,
+    data: LearnedData,
   ): Promise<LearnResponse> {
     return new Promise((resolve, reject) => {
       this.queue.push({ entry: { request, data }, resolve, reject });
 
       // Flush immediately if batch is full
       if (this.queue.length >= this.config.maxSize) {
-        this.flush();
+        void this.flush();
         return;
       }
 
@@ -187,7 +189,14 @@ export class LearnBatcher {
   /**
    * Flush the current batch
    */
-  private async flush(): Promise<void> {
+  private flush(): Promise<void> {
+    const run = this.flushOnce();
+    this.inFlight.add(run);
+    void run.finally(() => this.inFlight.delete(run));
+    return run;
+  }
+
+  private async flushOnce(): Promise<void> {
     if (this.flushTimeout) {
       clearTimeout(this.flushTimeout);
       this.flushTimeout = null;
@@ -227,8 +236,11 @@ export class LearnBatcher {
    * Force flush and wait for completion (for cleanup/shutdown)
    */
   async forceFlush(): Promise<void> {
-    if (this.queue.length > 0) {
-      await this.flush();
+    // Drain everything queued (possibly several batches) AND wait for flushes
+    // started earlier — otherwise learns still in flight are lost at shutdown.
+    while (this.queue.length > 0 || this.inFlight.size > 0) {
+      if (this.queue.length > 0) void this.flush();
+      await Promise.allSettled([...this.inFlight]);
     }
   }
 

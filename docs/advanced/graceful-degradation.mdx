@@ -11,7 +11,7 @@ FetchBrain includes a built-in circuit breaker that ensures your scraper continu
 
 ```
 API Healthy       → Normal operation, recall/learn active
-API Slow (>500ms) → Timeout, continue without recall
+API Slow (>1.5s) → Timeout, continue without recall
 API Down          → Circuit opens, scraper runs standalone
 API Recovers      → Circuit closes, recall/learn resume
 ```
@@ -84,7 +84,7 @@ const crawler = FetchBrain.enhance(crawler, {
 
 ## Best Practices
 
-1. **Always set a timeout** - The default 500ms is good for most cases
+1. **Always set a timeout** - The default 1.5s is good for most cases
 2. **Use learning mode** - Even when circuit is open, requests are queued for learning
 3. **Monitor stats** - Check `stats()` for recall rates
 4. **Log errors** - Enable debug mode in staging to catch issues early

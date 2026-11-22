@@ -11,7 +11,7 @@
  * Like realistic-integration.test.ts, only global `fetch` is stubbed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { FetchBrain, MAX_STASH_ENTRIES } from "../src/enhance";
+import { FetchBrain, MAX_STASH_ENTRIES, PRE_RECALL_STASH_WAIT_MS } from "../src/enhance";
 import { FetchBrainClient } from "../src/client";
 import type { FetchBrainConfig, RecalledEvent } from "../src/types";
 
@@ -63,6 +63,10 @@ function createFakeCrawler(handler: (ctx: any) => Promise<void>) {
     addRequests: vi.fn(async (reqs: any, options?: unknown) => {
       addRequestsArgs.push([reqs, options]);
       if (Array.isArray(reqs)) enqueued.push(...reqs);
+      // Like Crawlee, also accept (async) iterables — large lists arrive lazily.
+      else if (reqs && typeof reqs[Symbol.asyncIterator] === "function") {
+        for await (const r of reqs) enqueued.push(r);
+      }
     }),
     run: async () => {},
   };
@@ -578,7 +582,13 @@ describe("stash eviction cap", () => {
     const { crawler, enqueued } = createFakeCrawler(vi.fn());
     const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
 
-    await enhanced.addRequests(urls);
+    // Nothing executes during this enqueue, so the stash never drains: the last
+    // slice waits for room, gives up after PRE_RECALL_STASH_WAIT_MS, and evicts.
+    vi.useFakeTimers();
+    const adding = enhanced.addRequests(urls);
+    await vi.advanceTimersByTimeAsync(PRE_RECALL_STASH_WAIT_MS + 1_000);
+    await adding;
+    vi.useRealTimers();
     const enqueueCalls = api.recallCalls().length; // ceil(5001/100) chunked bulk calls
 
     // Entry 1 survived — served from the stash, no extra API call.
