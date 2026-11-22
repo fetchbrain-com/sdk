@@ -37,10 +37,31 @@ describe("client context headers", () => {
     const ctx = headers["X-FB-Context"] ? JSON.parse(headers["X-FB-Context"]) : {};
     expect(ctx.FETCHBRAIN_SCRAPER_ID).toBeUndefined();
     const printed = [...warn.mock.calls, ...log.mock.calls].flat().join(" ");
-    expect(printed).toMatch(/invalid scraper name/);
+    expect(printed).toMatch(/invalid scraper name from the scraper option/);
+    expect(printed).toMatch(/shared default memory/);
     expect(printed).not.toMatch(/has space/);
+    expect(printed).not.toMatch(/FetchBrain: FetchBrain:/);
     warn.mockRestore();
     log.mockRestore();
+  });
+
+  it("an invalid option falls back to a valid FETCHBRAIN_SCRAPER_ID, with a warning", async () => {
+    vi.stubEnv("FETCHBRAIN_SCRAPER_ID", "shop-a");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new FetchBrainClient({ apiKey: "fb_test_123", scraper: "Shop A" });
+    await client.stats();
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(JSON.parse(headers["X-FB-Context"]).FETCHBRAIN_SCRAPER_ID).toBe("shop-a");
+    expect(warn.mock.calls.flat().join(" ")).toMatch(/Using "shop-a" instead/);
+    warn.mockRestore();
+  });
+
+  it("an empty option does not hide FETCHBRAIN_SCRAPER_ID", async () => {
+    vi.stubEnv("FETCHBRAIN_SCRAPER_ID", "shop-a");
+    const client = new FetchBrainClient({ apiKey: "fb_test_123", scraper: "" });
+    await client.stats();
+    const headers = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
+    expect(JSON.parse(headers["X-FB-Context"]).FETCHBRAIN_SCRAPER_ID).toBe("shop-a");
   });
 
   it("sends native platform vars in X-FB-Context with no platform-specific headers", async () => {

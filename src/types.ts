@@ -15,9 +15,10 @@ export interface FetchBrainConfig {
   /**
    * Name this scraper so it gets its own memory (otherwise every scraper on
    * your account outside Apify shares one default memory). Same as setting the
-   * FETCHBRAIN_SCRAPER_ID env var; this option wins. Lowercase letters, digits,
-   * '.', '_' and '-', max 64, not starting with '_'. Invalid names are ignored
-   * with a warning. On Apify a name overrides the actor id.
+   * FETCHBRAIN_SCRAPER_ID env var; a valid option wins, an empty or invalid one
+   * falls back to the env var. Lowercase letters, digits, '.', '_' and '-',
+   * max 64, starting with a letter or digit. Invalid names are ignored with a
+   * warning. On Apify a name overrides the actor id.
    */
   scraper?: string;
 

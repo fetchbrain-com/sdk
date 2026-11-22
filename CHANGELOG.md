@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `scraper` option (or the `FETCHBRAIN_SCRAPER_ID` env var) names a scraper so it gets
+  its own memory; outside Apify, unnamed scrapers keep sharing the account's default
+  memory. Names are lowercased; 1-64 of `a-z 0-9 . _ -`, starting with a letter or
+  digit. A valid option wins; an empty or invalid option falls back to the env var.
+  Invalid names are ignored with a warning, never thrown.
+
+### Changed
+- `FETCHBRAIN_SCRAPER_ID` is now validated, normalized and always sent first in the
+  context header (0.3.0-0.5.1 forwarded it raw and could drop it when many other
+  `*_ID` vars were set). Requires the matching API release.
+- On Apify, a scraper name replaces the actor id as the memory scope, so that actor's
+  existing memory goes cold.
+
 ## [0.5.1] - 2026-11-22
 
 ### Fixed

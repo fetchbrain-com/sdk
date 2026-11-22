@@ -56,9 +56,10 @@ Memory is always private to your account. Within it:
 - **On Apify, each actor has its own memory.** Recall and SDK `ask()` calls
   from inside an actor only see what that actor learned (scoped by
   `APIFY_ACTOR_ID`).
-- **Everywhere else, scrapers share one memory per API key.** Scraper A can
-  recall what scraper B learned, and the more you've learned, the fewer
-  requests need a real fetch on the next run.
+- **Everywhere else, scrapers share one default memory per account** unless
+  you [name them](/docs/sdk/enhance#param-scraper) with the `scraper` option
+  or the `FETCHBRAIN_SCRAPER_ID` env var. Unnamed scrapers can recall what
+  each other learned; a named scraper learns and recalls only its own memory.
 - **Ask Your Brain in the dashboard sees across all of it.** A question like
   "which products are under $20?" doesn't care which scraper learned that
   price — it answers from everything your account has indexed.

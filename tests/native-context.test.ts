@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildNativeContext, getPlatformBuildId, normalizeScraperName } from "../src/native-context";
+import { buildNativeContext, getPlatformBuildId, normalizeScraperName, resolveScraperName } from "../src/native-context";
 
 describe("getPlatformBuildId", () => {
   it("returns the platform build identifier", () => {
@@ -141,19 +141,43 @@ describe("scraper name (FETCHBRAIN_SCRAPER_ID)", () => {
   it("keeps the name even when many long *_ID vars exhaust the header budget", () => {
     const env: Record<string, string> = {};
     for (let i = 0; i < 60; i++) env[`A_${String(i).padStart(2, "0")}_ID`] = "v".repeat(200);
-    env.FETCHBRAIN_SCRAPER_ID = "shop-a";
-    const header = buildNativeContext(env);
+    const header = buildNativeContext(env, "shop-a");
     expect(header!.length).toBeLessThanOrEqual(2048);
     expect(JSON.parse(header!).FETCHBRAIN_SCRAPER_ID).toBe("shop-a");
   });
 
-  it("config name wins over the env var, normalized", () => {
-    const header = buildNativeContext({ FETCHBRAIN_SCRAPER_ID: "from-env" }, "From-Config");
-    expect(JSON.parse(header!).FETCHBRAIN_SCRAPER_ID).toBe("from-config");
+  it("never forwards the raw env var; only the resolved name it is given", () => {
+    expect(buildNativeContext({ FETCHBRAIN_SCRAPER_ID: "_default" })).toBeUndefined();
+    expect(buildNativeContext({ FETCHBRAIN_SCRAPER_ID: "shop-a" })).toBeUndefined();
+    expect(buildNativeContext({}, "has space")).toBeUndefined();
+  });
+});
+
+describe("resolveScraperName", () => {
+  it("option wins over the env var, normalized", () => {
+    expect(resolveScraperName("From-Config", { FETCHBRAIN_SCRAPER_ID: "from-env" })).toEqual({
+      name: "from-config",
+      rejected: [],
+    });
   });
 
-  it("omits an invalid name instead of forwarding it", () => {
-    expect(buildNativeContext({ FETCHBRAIN_SCRAPER_ID: "_default" })).toBeUndefined();
-    expect(buildNativeContext({}, "has space")).toBeUndefined();
+  it("falls back to the env var when the option is unset or empty", () => {
+    for (const option of [undefined, "", "  "]) {
+      expect(resolveScraperName(option, { FETCHBRAIN_SCRAPER_ID: "Shop-A" })).toEqual({ name: "shop-a", rejected: [] });
+    }
+  });
+
+  it("falls back to a valid env var when the option is invalid, reporting the option", () => {
+    expect(resolveScraperName("Shop A", { FETCHBRAIN_SCRAPER_ID: "shop-a" })).toEqual({
+      name: "shop-a",
+      rejected: ["option"],
+    });
+  });
+
+  it("reports every invalid source and yields no name", () => {
+    expect(resolveScraperName("-shop", { FETCHBRAIN_SCRAPER_ID: "_default" })).toEqual({
+      rejected: ["option", "FETCHBRAIN_SCRAPER_ID"],
+    });
+    expect(resolveScraperName(undefined, {})).toEqual({ rejected: [] });
   });
 });

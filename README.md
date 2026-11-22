@@ -279,13 +279,16 @@ FetchBrain.enhance(crawler, { apiKey, scraper: "shop-a" });
 - A named scraper learns and recalls only its own memory, so `shop-a` and
   `shop-b` never see each other's pages.
 - Names use lowercase letters, digits, `.`, `_` and `-`, up to 64 characters,
-  and can't start with `_`. Uppercase is lowercased. An invalid name is ignored
-  with a warning, and that scraper keeps using the default memory.
+  and must start with a letter or digit. Uppercase is lowercased. An invalid
+  name is ignored with a warning: an invalid `scraper` option falls back to
+  `FETCHBRAIN_SCRAPER_ID` if that is valid, otherwise the scraper keeps using
+  the default memory.
 - A new name starts empty. What you learned before naming stays in the default
   memory, which unnamed scrapers keep using.
 - On Apify, memory is already per actor. Setting a name there replaces the
   actor id, so that actor's existing memory goes cold.
-- The `scraper` option wins over the environment variable. SDK 0.3.0 and later
+- A valid `scraper` option wins over the environment variable; an empty one
+  doesn't hide it. SDK 0.3.0 and later
   also forward `FETCHBRAIN_SCRAPER_ID`, but before this release only on a
   best-effort basis: many other `*_ID` variables can push it out of the
   header. Upgrade to guarantee delivery.

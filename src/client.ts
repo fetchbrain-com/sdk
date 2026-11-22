@@ -17,7 +17,7 @@ import type {
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
 import { createLogger } from "./logger";
-import { buildNativeContext, getPlatformBuildId, normalizeScraperName, SCRAPER_NAME_VAR } from "./native-context";
+import { buildNativeContext, getPlatformBuildId, resolveScraperName } from "./native-context";
 
 const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 500; // Fast timeout for graceful degradation
@@ -119,6 +119,8 @@ export class FetchBrainClient {
   private learnPausedUntil = 0;
   /** Warn about the learn cap once per pause, independent of the pause state. */
   private learnCapWarnedUntil = 0;
+  /** Valid, normalized scraper name (option, else env var); undefined = default memory. */
+  private scraperName: string | undefined;
 
   constructor(config: FetchBrainConfig) {
     this.config = {
@@ -143,11 +145,14 @@ export class FetchBrainClient {
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);
 
-    // Scraper name: invalid values are dropped (never thrown) — see native-context.
-    const rawScraper = this.config.scraper ?? process.env[SCRAPER_NAME_VAR];
-    if (rawScraper !== undefined && rawScraper !== "" && !normalizeScraperName(rawScraper)) {
+    // Scraper name, resolved once: invalid values are dropped (never thrown).
+    const scraper = resolveScraperName(config.scraper);
+    this.scraperName = scraper.name;
+    for (const source of scraper.rejected) {
       this.logger.warn(
-        "FetchBrain: ignoring invalid scraper name; use lowercase letters, digits, '.', '_' or '-' (max 64, not starting with '_')",
+        `ignoring invalid scraper name from ${source === "option" ? "the scraper option" : source}; ` +
+          "use 1-64 lowercase letters, digits, '.', '_' or '-', starting with a letter or digit. " +
+          (scraper.name ? `Using "${scraper.name}" instead.` : "This scraper uses the shared default memory."),
       );
     }
 
@@ -464,7 +469,7 @@ export class FetchBrainClient {
     }
 
     // Native platform context (allowlisted env vars, picked apart server-side)
-    const nativeContext = buildNativeContext(process.env, this.config.scraper);
+    const nativeContext = buildNativeContext(process.env, this.scraperName);
     if (nativeContext) {
       contextHeaders["X-FB-Context"] = nativeContext;
     }
