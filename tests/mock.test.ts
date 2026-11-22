@@ -61,6 +61,17 @@ describe('MockFetchBrain', () => {
     });
   });
 
+  describe('learnCap option', () => {
+    it('rejects learns past the cap while recall of known data keeps working', async () => {
+      const capped = new MockFetchBrain({ learnCap: 1 });
+      expect((await capped.learn({ url: 'https://example.com/a' }, { a: 1 })).status).toBe('success');
+      const second = await capped.learn({ url: 'https://example.com/b' }, { b: 1 });
+      expect(second).toEqual({ learned: 0, status: 'rejected' });
+      expect((await capped.recall({ url: 'https://example.com/a' })).known).toBe(true);
+      expect((await capped.recall({ url: 'https://example.com/b' })).known).toBe(false);
+    });
+  });
+
   describe('stats', () => {
     it('should track usage statistics', async () => {
       await mock.recall({ url: 'https://example.com/1' });

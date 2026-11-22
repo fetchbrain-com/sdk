@@ -48,10 +48,25 @@ class ApiError extends Error {
     statusText: string,
     /** Machine-readable `error` code from the API's response body, if any. */
     public readonly serverError?: string,
+    /** Specific rejection reason (`details.code ?? code`), e.g. LEARN_CAP_EXCEEDED. */
+    public readonly code?: string,
+    /** Seconds from a `Retry-After` header, when the API sent one. */
+    public readonly retryAfterSec?: number,
   ) {
     super(`API error: ${status} ${statusText}`);
     this.name = "ApiError";
   }
+}
+
+/** `Retry-After` as seconds: delta-seconds or an HTTP-date (RFC 9110). */
+export function parseRetryAfter(header: string | null): number | undefined {
+  if (!header) return undefined;
+  const secs = Number(header);
+  if (Number.isFinite(secs)) return secs > 0 ? secs : undefined;
+  const at = Date.parse(header);
+  if (Number.isNaN(at)) return undefined;
+  const delta = (at - Date.now()) / 1000;
+  return delta > 0 ? delta : undefined;
 }
 
 /**
@@ -97,6 +112,13 @@ export class FetchBrainClient {
   private batcher: RequestBatcher;
   private learnBatcher: LearnBatcher;
   private logger: Logger;
+  /**
+   * Epoch ms until which learns are paused after the API reported the monthly
+   * learn cap — the start of the next UTC month, when the cap resets. 0 = not paused.
+   */
+  private learnPausedUntil = 0;
+  /** Warn about the learn cap once per pause, independent of the pause state. */
+  private learnCapWarnedUntil = 0;
 
   constructor(config: FetchBrainConfig) {
     this.config = {
@@ -198,12 +220,15 @@ export class FetchBrainClient {
     if (!this.config.learning) {
       return { status: "rejected", learned: 0 };
     }
-    if (this.circuitBreaker.isOpen()) {
+    if (Date.now() < this.learnPausedUntil || this.circuitBreaker.isOpen()) {
       return { status: "rejected", learned: 0 };
     }
     try {
       return await this.learnBatcher.learn(request, data);
     } catch (error) {
+      if (error instanceof ApiError && error.code === "LEARN_CAP_EXCEEDED") {
+        return { status: "rejected", learned: 0 };
+      }
       this.logger.warn("Learn failed:", error);
       return { status: "rejected", learned: 0 };
     }
@@ -373,6 +398,29 @@ export class FetchBrainClient {
       this.circuitBreaker.recordSuccess();
       return response;
     } catch (error) {
+      // A 4xx is the learn being refused (cap reached, rate-limited, invalid
+      // entry), not the API degrading — tripping the shared breaker here would
+      // also stop RECALLS, so the crawl would re-scrape pages FetchBrain
+      // already knows. Back-pressure is handled with a learn-only pause instead.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        if (error.code === "LEARN_CAP_EXCEEDED") {
+          const now = new Date();
+          const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
+          // Always extend (a shorter 429 pause may already be active).
+          this.learnPausedUntil = Math.max(this.learnPausedUntil, monthStart);
+          if (this.learnCapWarnedUntil < monthStart) {
+            this.learnCapWarnedUntil = monthStart;
+            this.logger.warn(
+              "FetchBrain monthly learning limit reached — learning is paused until the 1st (UTC); recall keeps working.",
+            );
+          }
+        } else if (error.status === 429) {
+          const waitMs = Math.min(Math.max(error.retryAfterSec ?? 30, 1), 3600) * 1000;
+          this.learnPausedUntil = Math.max(this.learnPausedUntil, Date.now() + waitMs);
+          this.logger.debug(`Learn rate-limited; pausing learns for ${waitMs / 1000}s`);
+        }
+        throw error;
+      }
       this.circuitBreaker.recordFailure();
       throw error;
     }
@@ -434,13 +482,26 @@ export class FetchBrainClient {
 
       if (!response.ok) {
         let serverError: string | undefined;
+        let code: string | undefined;
         try {
-          const errBody = (await response.json()) as { error?: unknown };
+          const errBody = (await response.json()) as {
+            error?: unknown;
+            code?: unknown;
+            details?: { code?: unknown };
+          };
           if (typeof errBody.error === "string") serverError = errBody.error;
+          const specific = errBody.details?.code ?? errBody.code;
+          if (typeof specific === "string") code = specific;
         } catch {
           // Non-JSON error body — no machine-readable code to carry.
         }
-        throw new ApiError(response.status, response.statusText, serverError);
+        throw new ApiError(
+          response.status,
+          response.statusText,
+          serverError,
+          code,
+          parseRetryAfter(response.headers.get("Retry-After")),
+        );
       }
 
       return (await response.json()) as T;
