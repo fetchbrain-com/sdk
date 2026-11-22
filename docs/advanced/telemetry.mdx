@@ -1,18 +1,23 @@
 ---
 title: Telemetry
-description: "Opt-in anonymized telemetry — what's collected, what isn't, and how to enable it"
+description: "Opt-in, pseudonymous telemetry — what's collected, what isn't, and how to enable it"
 ---
 
 ## Overview
 
-FetchBrain can optionally collect anonymized diagnostics about how your
-requests perform — timing, status codes, proxy outcomes, block indicators —
-to help improve the service. This is **telemetry**, and it is **off by
-default** everywhere in the SDK. You choose to send it or not.
+FetchBrain can optionally collect diagnostics about how your requests
+perform — timing, status codes, proxy outcomes, block indicators. It is
+**off by default** everywhere in the SDK, and nothing is collected or sent
+unless you opt in.
+
+<Note>
+  The SDK README's [Telemetry section](https://github.com/fetchbrain-com/sdk#telemetry-opt-in)
+  is the disclosure of record: it lists every field, when each is sent, and
+  [everything else that leaves your process](https://github.com/fetchbrain-com/sdk#what-leaves-your-process).
+  This page summarizes it.
+</Note>
 
 ## Enabling it
-
-Telemetry is off unless you explicitly turn it on:
 
 ```typescript
 FetchBrain.enhance(crawler, {
@@ -23,95 +28,85 @@ FetchBrain.enhance(crawler, {
 
 Every client path in the SDK — `FetchBrain.enhance()`, the standalone
 `FetchBrain` class, and `FetchBrainClient` — is consistent: no `telemetry`
-config means no telemetry, full stop.
+config means no telemetry.
+
+## Pseudonymous, not anonymous
+
+Telemetry is sent to the FetchBrain API with your API key and the SDK's
+usual `X-FB-*` headers, so it is **linked to your account**. It's used to
+improve FetchBrain's recommendations (proxy recommendations, block
+detection, configuration tuning); aggregated statistics may inform
+recommendations for other users.
 
 ## What gets collected
 
-When enabled, telemetry captures anonymized signal about each request. All
-identifying detail is hashed, generalized, or dropped before it ever leaves
-your process.
+One entry per request FetchBrain handles (`skipLabels` requests excluded),
+after your handler finishes — or whenever the request fails inside the SDK's
+wrapper, including failures before your handler runs and on known requests.
+Known requests that are skipped successfully produce no entry. Session,
+proxy, status code and response size are sent only on success; a failure
+entry carries `blocked: true`.
 
-| Field | Example | Notes |
-| --- | --- | --- |
-| `domain` | `walmart.com` | hostname only |
-| `urlHash` | `a1b2c3d4e5f6...` | SHA-256 of the full URL — the URL itself is never sent |
-| `urlPattern` | `/product/*/details` | path with IDs, UUIDs, and long tokens generalized to `*` |
-| `responseTimeMs` / `totalTimeMs` | `842` | timing |
-| `statusCode` | `200`, `403` | HTTP status |
-| `retryCount` | `1` | retries for this request |
-| `contentSize` | `48213` | response size in bytes |
-| `proxyCountry` | `US` | proxy's country code |
-| `proxyType` | `residential` \| `datacenter` \| `mobile` | inferred from the proxy config |
-| `proxySuccess` | `true` | whether the proxy's request succeeded |
-| `sessionAge` | `14` | requests in the current session (count, not identity) |
-| `sessionErrorScore` | `0.05` | session error rate 0–1 |
-| `cookieCount` | `3` | number of cookies — never their names or values |
-| `blocked` | `true` | whether the request was blocked |
-| `blockType` | `captcha` \| `403` \| `429` \| `timeout` | block classification |
-| `crawlerType` | `cheerio` \| `playwright` \| `puppeteer` | which Crawlee crawler ran the request |
-| `requestLabel` | `listing` | your own Crawlee label, if set |
+- **Always, when enabled:** the hostname in plain text (`domain`); the first
+  16 hex characters of an **unsalted** SHA-256 of the full URL including its
+  query string (`urlHash`); the path with numeric segments, UUIDs and
+  20+ character alphanumeric tokens replaced by `*` — other segments such as
+  slugs and usernames are sent as-is (`urlPattern`); `timestamp`;
+  `crawlerType`; your `requestLabel`; and, if the request has a Crawlee
+  session, its usage count and error score (on success).
+- **`sharePerformance`:** retry count, timing from when the SDK starts
+  handling the request (including recall), and on success the status code
+  and response size.
+- **`shareSitePatterns`:** `blocked` / `blockType`, derived from status codes
+  (403, 429, 5xx) and error categories (`captcha`, `timeout`, `blocked`,
+  rate limit). A request that fails inside the SDK wrapper for any reason
+  counts as blocked.
+- **`shareProxyInfo`** (on success): proxy country code, a proxy type guessed locally
+  from the proxy URL, and whether the status was below 400.
 
-## What is never collected
-
-Regardless of configuration, telemetry **never** includes:
-
-- Raw URLs (only a domain, a SHA-256 hash, and a generalized path pattern)
-- Request or response bodies
-- Cookie names or values (only a count)
-- Proxy IP addresses
-- Credentials or anything credential-shaped
-- Any other PII
-
-This mirrors the SDK's general rule: by default only your requests, the
-data you choose to learn, and platform identifiers (env vars ending in
-`_ID`, plus `NODE_ENV`/`REGION`/`CI`) ever leave your process. Telemetry is
-the one additional, explicitly opt-in category on top of that.
+Never sent by telemetry: raw URLs or query strings, request or response
+bodies, your scraped requests' headers or cookies, error messages, or proxy
+URLs and IPs.
 
 ## Sub-flags
 
-Enabling telemetry turns on all categories by default. You can disable
-individual categories while keeping the rest:
+Each sub-flag defaults to `true` once telemetry is enabled:
 
 ```typescript
 FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
   telemetry: {
     enabled: true,
-    sharePerformance: true, // timing, retries, status codes (default: true)
-    shareProxyInfo: false, // proxy country/type/success (default: true)
-    shareSitePatterns: true, // block/rate-limit indicators (default: true)
+    sharePerformance: true, // default: true
+    shareProxyInfo: false, // default: true
+    shareSitePatterns: true, // default: true
   },
 });
 ```
 
 <ParamField body="enabled" type="boolean" required>
-  Master switch. `false` or omitted means no telemetry at all — no other
-  flag matters.
+  Master switch. `false` or omitted means no telemetry at all.
 </ParamField>
 
 <ParamField body="sharePerformance" type="boolean" default="true">
-  Response times, retry counts, status codes, content size.
+  Status codes, retry counts, timing, content size.
 </ParamField>
 
 <ParamField body="shareProxyInfo" type="boolean" default="true">
-  Proxy country, proxy type, and whether the proxy succeeded. Never IPs.
+  Proxy country, locally-derived proxy type, and success. Never proxy URLs or IPs.
 </ParamField>
 
 <ParamField body="shareSitePatterns" type="boolean" default="true">
-  Block/rate-limit indicators (`blocked`, `blockType`).
+  Block indicators (`blocked`, `blockType`).
 </ParamField>
 
 ## How collection behaves
 
-- **Buffered and batched.** Entries queue in memory and flush periodically
-  or when the buffer fills, rather than firing one network call per
-  request.
-- **Best-effort.** A telemetry flush failure is logged at debug level and
-  swallowed — it never throws into your crawl and never affects recall or
-  learn.
-- **Session and domain data only — no cross-request identity is sent.**
-  `sessionAge` and `sessionErrorScore` are counters and rates, not
-  identifiers.
+- **Buffered and batched.** Entries are sent every 50 entries, every 30
+  seconds, and when the crawl finishes.
+- **Best-effort.** Send failures are ignored — they never throw into your
+  crawl and never affect recall or learn.
 
-## See Also
+## See also
 
 - [FetchBrain.enhance](/docs/sdk/enhance) — full `telemetry` config field

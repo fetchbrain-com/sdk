@@ -26,7 +26,7 @@ const BULK_RECALL_TIMEOUT = 3000; // Enqueue-time pre-recall is off the per-requ
 const MAX_BULK_ITEMS = 100; // API's MAX_ITEMS_PER_REQUEST — recallBulk chunks to stay under it
 const BULK_RECALL_CONCURRENCY = 5; // Chunks in flight at once — caps enqueue latency for huge seed lists without stampeding the API
 const MAX_LEARN_ENTRIES = 50; // API's MAX_ENTRIES_PER_REQUEST for /v1/learn
-const ASK_TIMEOUT = 10000; // Ask hits the knowledge index; give it room like learn
+const ASK_TIMEOUT = 10000; // Ask searches memory and may generate an answer; give it room like learn
 
 /** Clamp a user-configured batch size to an endpoint's per-request cap. */
 function clampBatch(
@@ -256,7 +256,7 @@ export class FetchBrainClient {
   }
 
   /**
-   * Ask a natural-language question against learned knowledge
+   * Ask a natural-language question, answered from everything the account has learned
    *
    * `model` picks the generation model for answer mode from the server's
    * menu (e.g. "llama-3.3-70b", "kimi-k2.5" — premium models cost extra ask

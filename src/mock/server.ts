@@ -102,7 +102,7 @@ app.post("/v1/recall", handleRecall);
 app.post("/v1/query", handleRecall); // deprecated alias
 
 /**
- * POST /v1/ask - Naive natural-language ask against learned knowledge.
+ * POST /v1/ask - Naive natural-language ask against learned memory.
  * Substring-matches the query's words against stored data. When `answer`
  * is truthy, also returns a canned `answer` string built from the top
  * source — it is NOT a real synthesized answer, just enough of the shape
@@ -218,7 +218,7 @@ app.get("/health", (req, res) => {
 });
 
 /**
- * POST /reset - Reset knowledge and stats (testing only)
+ * POST /reset - Reset memory and stats (testing only)
  */
 app.post("/reset", (req, res) => {
   knowledge.clear();

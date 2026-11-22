@@ -202,6 +202,42 @@ describe('MockFetchBrain', () => {
     });
   });
 
+  describe('initialMemory option (documented name)', () => {
+    it('seeds memory and getMemorySize() reports it', async () => {
+      const seeded = new MockFetchBrain({
+        initialMemory: new Map([['https://example.com/seeded', { seeded: true }]]),
+      });
+
+      const result = await seeded.recall({ url: 'https://example.com/seeded' });
+      expect(result.known).toBe(true);
+      expect(result.data).toEqual({ seeded: true });
+      expect(seeded.getMemorySize()).toBe(1);
+    });
+
+    it('prefers initialMemory over initialKnowledge for the same URL', async () => {
+      const both = new MockFetchBrain({
+        initialKnowledge: new Map([['https://example.com/x', { from: 'knowledge' }]]),
+        initialMemory: new Map([['https://example.com/x', { from: 'memory' }]]),
+      });
+
+      const result = await both.recall({ url: 'https://example.com/x' });
+      expect(result.data).toEqual({ from: 'memory' });
+      expect(both.getMemorySize()).toBe(1);
+    });
+
+    it('keeps the deprecated aliases working alongside it', () => {
+      const both = new MockFetchBrain({
+        initialMemory: new Map([['https://example.com/a', { a: 1 }]]),
+        initialKnowledge: new Map([['https://example.com/b', { b: 1 }]]),
+      });
+
+      expect(both.has('https://example.com/a')).toBe(true);
+      expect(both.has('https://example.com/b')).toBe(true);
+      expect(both.getKnowledgeSize()).toBe(both.getMemorySize());
+      expect(both.getMemorySize()).toBe(2);
+    });
+  });
+
   describe('simulateFailures option', () => {
     it('should simulate failures when enabled', async () => {
       const failingMock = new MockFetchBrain({

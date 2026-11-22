@@ -57,11 +57,11 @@ async function main() {
   );
 
   console.log('\n=== First Run ===');
-  console.log('All requests will need AI learning (new pages)\n');
+  console.log('All requests are new: the brain learns them\n');
   await crawler.run(urls);
 
   console.log('\n=== Second Run ===');
-  console.log('All requests should use AI knowledge (instant)\n');
+  console.log('All requests should be recalled from memory (no fetch)\n');
   await crawler.run(urls);
 
   // Get stats from the client

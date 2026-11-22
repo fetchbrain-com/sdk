@@ -15,7 +15,7 @@ POST https://api.fetchbrain.com/v1/learn
   known data via the [Recall endpoint](/docs/api-reference/endpoints/recall).
 </Note>
 
-Teach FetchBrain new knowledge for one or more requests in a single call. Each
+Teach FetchBrain new data for one or more requests in a single call. Each
 entry pairs the raw `request` with the `data` you scraped.
 
 <Note>
@@ -25,7 +25,7 @@ entry pairs the raw `request` with the `data` you scraped.
 
 ## How identity works
 
-FetchBrain derives the knowledge key **server-side** from `(method, normalized url, uniqueKey)`.
+FetchBrain derives the memory key **server-side** from `(method, normalized url, uniqueKey)`.
 The request **body is never part of the key**. For requests that share a URL and
 method (POST or GraphQL endpoints), set a distinct `uniqueKey` per resource so
 each is stored separately. When `uniqueKey` is omitted it defaults to the URL.
