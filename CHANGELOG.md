@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-22
+
 ### Added
 - `scraper` option (or the `FETCHBRAIN_SCRAPER_ID` env var) names a scraper so it gets
   its own memory; outside Apify, unnamed scrapers keep sharing the account's default
