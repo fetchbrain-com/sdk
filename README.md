@@ -24,9 +24,8 @@ you already know.
 FetchBrain gives each of your scrapers a **memory**. Before each request, a
 crawler asks *"do I already know this request?"* — known requests come back
 **in milliseconds** without your scraper fetching the page; unknown ones run
-normally and are learned. Recall is keyed by your scraper's identity, so
-each scraper's memory grows run after run, and `ask()` answers questions from everything
-all your scrapers have learned under your API key — a data asset that
+normally and are learned. Memory grows run after run, and `ask()` answers
+plain-English questions from what you've learned — a data asset that
 compounds instead of costs. **Learning is always free.**
 
 ```text
@@ -111,8 +110,8 @@ Everywhere else, it compounds:
 
 **Data-service teams & aggregators** — each scraper fetches an expensive
 request once and recalls it on every run after, so per-run proxy and compute
-cost falls as coverage grows — and `ask()` turns everything all your scrapers
-have collected into memory you can ask questions of, with no warehouse to run.
+cost falls as coverage grows — and `ask()` turns what they've collected into
+memory you can ask questions of, with no warehouse to run.
 
 **Product teams & AI agents** — apps and browsing agents that re-hit the same
 requests get them back in milliseconds, straight from memory: no fetch, no
@@ -170,9 +169,10 @@ Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES �
 2. **Known** — the remembered data is pushed for you and your handler is skipped; requests recalled at enqueue also skip the fetch
 3. **Learning** — unknown requests run through your handler as normal, and the result teaches the brain for that scraper's future runs
 
-Recall is keyed by your scraper's identity, which the API derives from the
-platform identifiers the SDK forwards ([`X-FB-Context`](#what-leaves-your-process)).
-`ask()` answers across everything learned under your API key.
+Memory is always private to your account. Within it, scoping depends on
+where the scraper runs ([details](#do-my-scrapers-share-memory)): on Apify
+each actor has its own memory; everywhere else, all scrapers under one API
+key share one memory.
 
 ### Memory depth
 
@@ -361,9 +361,10 @@ FetchBrain.enhance(crawler, {
 
 ## Ask your brain anything
 
-Recall is per scraper, but `ask()` answers from everything **all** your
-scrapers have learned under your API key — one question, your whole memory,
-no exact URLs, no warehouse:
+`ask()` answers from what's been learned — one question, no exact URLs, no
+warehouse. From the SDK it uses the same scope as recall (see
+[Do my scrapers share memory?](#do-my-scrapers-share-memory)); Ask Your Brain
+in the dashboard answers across your whole account:
 
 ```typescript
 import { FetchBrainClient } from "@fetchbrain.com/sdk";
@@ -491,7 +492,9 @@ Every API call (recall, learn, ask, stats, telemetry) sends these headers:
 | `X-FB-Crawler` | the crawler class name (e.g. `CheerioCrawler`), while a request is being handled |
 | `X-FB-Label` | the request's Crawlee label, while a request is being handled |
 
-`X-FB-Context` is how the API derives your scraper identity. It includes
+`X-FB-Context` carries your platform identifiers; the API uses
+`APIFY_ACTOR_ID` from it to scope memory per Apify actor (other `*_ID`
+variables do not affect scoping) and `*BUILD_ID` for `refreshOnRebuild`. It includes
 every environment variable whose name ends in `_ID`, plus `NODE_ENV`,
 `REGION` and `CI`, except names containing `TOKEN`, `SECRET`, `PASSWORD`,
 `CREDENTIAL`, `KEY`, `AUTH` or `COOKIE`, values that look like a JWT or a
@@ -624,8 +627,13 @@ package.
 ## FAQ
 
 **Do my scrapers share memory?**
-`ask()` answers from everything learned under your API key. Recall is keyed
-by your scraper's identity, so each scraper recalls what it learned.
+It depends on where they run. Memory is always private to your account.
+- **On Apify**, each actor (`APIFY_ACTOR_ID`) has its own memory: recall and
+  SDK `ask()` calls from inside an actor only see what that actor learned.
+- **Everywhere else**, all scrapers using the same API key share one memory —
+  scraper A can recall what scraper B learned.
+- **Ask Your Brain in the dashboard** (and `ask()` calls with no platform
+  context) answers across everything your account has indexed.
 
 **What leaves my process?**
 Your requests (minus `Authorization`, `Cookie` and `Set-Cookie` headers),

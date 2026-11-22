@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   truncated unsalted SHA-256, and every field, sub-flag and default is listed. Added a
   "What leaves your process" section listing every request header and what is forwarded
   with recall/learn (only `Authorization`, `Cookie` and `Set-Cookie` headers are stripped).
-- README now states that recall is scoped per scraper while `ask()` answers across your account.
+- README and docs now state memory scoping accurately: per actor on Apify, shared per API key elsewhere; dashboard Ask spans the whole account.
 
 ### Added
 - `MockFetchBrain`: `initialMemory` option and `getMemorySize()`. `initialKnowledge` and
