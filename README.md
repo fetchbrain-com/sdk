@@ -7,7 +7,7 @@
 
 **Never pay twice for the same page.**
 
-*Your scraper learns a page once; later runs recall it within your memory depth instead of fetching it again.*
+*Your scraper learns a page once; within your memory depth, later runs recall it — and known pages you add with `crawler.addRequests()` skip the fetch.*
 
 [![CI](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/fetchbrain-com/sdk/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/@fetchbrain.com%2Fsdk.svg)](https://www.npmjs.com/package/@fetchbrain.com/sdk) [![TypeScript](https://img.shields.io/badge/TypeScript-first-3178C6.svg)](https://www.typescriptlang.org/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -23,10 +23,10 @@ you already know.
 
 FetchBrain gives your scrapers a **memory**, private to your account. Before each request, a
 crawler asks *"do I already know this request?"* — known requests come back
-**from memory** without your scraper fetching the page; unknown ones run
+**from memory** (those you add with `crawler.addRequests()` skip the fetch entirely); unknown ones run
 normally and are learned. Memory grows run after run, and `ask()` answers
 plain-English questions from what you've learned — a data asset that
-compounds instead of costs. **Learning is always free.**
+compounds instead of costs. **Learning is never billed.**
 
 ```text
 $ node scraper.js                      # first run — the brain learns
@@ -109,7 +109,7 @@ freshness-critical monitoring where you always need the live value.
 Everywhere else, it compounds:
 
 **Data-service teams & aggregators** — each scraper fetches an expensive
-request once and recalls it on every run after, so per-run proxy and compute
+request once and recalls it on later runs within your memory depth, so per-run proxy and compute
 cost falls as coverage grows — and `ask()` turns what they've collected into
 memory you can ask questions of, with no warehouse to run.
 
@@ -123,7 +123,7 @@ reference data barely change between runs, so recall skips the fetch and each
 scheduled run costs less. Keep volatile fields on `memory: "fresh"` so you
 never trade accuracy for speed.
 
-**Solo scraper developers** — start free: learning never costs anything, and
+**Solo scraper developers** — start free: learning is never billed, and
 the requests you've already made come back from memory instead of getting
 blocked or throttled. One line to add, one brain that grows with everything
 you scrape.
@@ -160,7 +160,7 @@ await crawler.run(urls);
 ## How it works
 
 ```
-Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES ──▶ data from memory, fetch skipped
+Your crawler ──▶ FetchBrain ──▶ knows this request? ──▶ YES ──▶ data from memory (pre-recalled requests skip the fetch)
                                       │
                                       └──▶ NO ──▶ your handler runs ──▶ brain learns, free
 ```
@@ -646,7 +646,7 @@ headers including platform identifiers (env vars ending in `_ID`, plus
 telemetry, the fields in [Telemetry](#telemetry-opt-in) too.
 
 **What does learning cost?**
-Nothing. Learning is always free — you pay only for known recalls.
+Nothing. Learning is never billed — you pay only for known recalls.
 
 **What if the data changed since the brain learned it?**
 That's what memory depth is for: pick `fresh` (1h) for volatile data, or
