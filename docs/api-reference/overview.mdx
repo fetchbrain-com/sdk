@@ -14,7 +14,7 @@ https://api.fetchbrain.com/v1
 All requests must include your API key in the Authorization header:
 
 ```http
-Authorization: Bearer fb_live_your_api_key
+Authorization: Bearer fb_your_api_key
 ```
 
 Get your API key from [Dashboard → API Keys](https://fetchbrain.com/dashboard/keys).
@@ -37,6 +37,52 @@ FetchBrain derives the memory key **server-side** from
 `(method, normalized url, uniqueKey)`. The request **body is never part of the
 key** — it carries volatile data. To distinguish resources that share a URL and
 method (POST or GraphQL endpoints), set a distinct `uniqueKey` on each request.
+
+## Naming a scraper
+
+Memory is private to your account. Inside an account, every request without a
+scraper name shares one default memory. To give a scraper its own memory, send
+its name in the `X-FB-Context` header, a JSON object of string values, on
+both `/v1/recall` and `/v1/learn`:
+
+```http
+X-FB-Context: {"FETCHBRAIN_SCRAPER_ID":"shop-a"}
+```
+
+- Names are trimmed and lowercased, then must match `^[a-z0-9][a-z0-9._-]{0,63}$`
+  (letters, digits, `.`, `_`, `-`; up to 64; not starting with `_`).
+- An invalid name is ignored, so the request uses the default memory.
+- On Apify, `APIFY_ACTOR_ID` in the same header scopes memory per actor; a
+  valid `FETCHBRAIN_SCRAPER_ID` takes precedence over it.
+- A new name starts empty. What you learned without a name stays in the
+  default memory.
+- The header is capped at 2048 characters. Anything larger, or anything that
+  isn't a JSON object, is ignored.
+
+The Node SDK sends this header for you: see the
+[`scraper` option](/docs/sdk/enhance#param-scraper).
+
+```bash
+curl -X POST "https://api.fetchbrain.com/v1/recall" \
+  -H "Authorization: Bearer $FETCHBRAIN_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H 'X-FB-Context: {"FETCHBRAIN_SCRAPER_ID":"shop-a"}' \
+  -d '{"items":[{"ref":"0","request":{"url":"https://example.com/product/123"}}]}'
+```
+
+```python
+import json, os, requests
+
+headers = {
+    "Authorization": f"Bearer {os.environ['FETCHBRAIN_API_KEY']}",
+    "X-FB-Context": json.dumps({"FETCHBRAIN_SCRAPER_ID": "shop-a"}),
+}
+requests.post(
+    "https://api.fetchbrain.com/v1/recall",
+    headers=headers,
+    json={"items": [{"ref": "0", "request": {"url": "https://example.com/product/123"}}]},
+)
+```
 
 ## Error Responses
 

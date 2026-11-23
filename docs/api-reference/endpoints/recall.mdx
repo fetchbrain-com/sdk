@@ -30,6 +30,12 @@ that share one URL and method (for example POST or GraphQL endpoints), set a
 distinct `uniqueKey` per resource so each is remembered separately. When
 `uniqueKey` is omitted it defaults to the URL.
 
+<Note>
+  Send `X-FB-Context: {"FETCHBRAIN_SCRAPER_ID":"<name>"}` to use a named
+  scraper's own memory. Without it, requests use your account's default memory.
+  See [Naming a scraper](/docs/api-reference/overview#naming-a-scraper).
+</Note>
+
 ## Request Body
 
 ```json
@@ -105,7 +111,7 @@ distinct `uniqueKey` per resource so each is remembered separately. When
 <CodeGroup>
 ```bash cURL
 curl -X POST "https://api.fetchbrain.com/v1/recall" \
-  -H "Authorization: Bearer fb_live_your_api_key" \
+  -H "Authorization: Bearer fb_your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
     "items": [
