@@ -160,7 +160,11 @@ export class LearnBatcher {
   private logger: Logger;
   /** Flushes whose API call has not settled yet (awaited by forceFlush). */
   private inFlight = new Set<Promise<void>>();
-  /** Callers of waitForRoom(), woken whenever a flush settles. */
+  /**
+   * Callers of waitForRoom(), oldest first. A settling flush wakes only as many
+   * as there are free backlog slots: waking all of them would tell each one
+   * "room" when only some fit, and the rest would then be dropped.
+   */
   private roomWaiters: (() => void)[] = [];
 
   constructor(
@@ -217,12 +221,17 @@ export class LearnBatcher {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return false;
       await new Promise<void>((resolve) => {
-        const timer = setTimeout(done, remaining);
-        function done() {
+        const wake = () => {
           clearTimeout(timer);
           resolve();
-        }
-        this.roomWaiters.push(done);
+        };
+        const timer = setTimeout(() => {
+          // Timed out: leave the queue so a later wake-up isn't spent on us.
+          const i = this.roomWaiters.indexOf(wake);
+          if (i !== -1) this.roomWaiters.splice(i, 1);
+          resolve();
+        }, remaining);
+        this.roomWaiters.push(wake);
       });
     }
     return true;
@@ -244,13 +253,15 @@ export class LearnBatcher {
     this.inFlight.add(run);
     void run.finally(() => {
       this.inFlight.delete(run);
-      const waiters = this.roomWaiters.splice(0);
-      for (const wake of waiters) wake();
+      // Start the next batch first (it moves entries out of the backlog), then
+      // wake one waiter per free slot below.
       if (this.queue.length >= this.config.maxSize) {
         this.flush();
       } else if (this.queue.length > 0 && !this.flushTimeout) {
         this.flushTimeout = setTimeout(() => this.flush(), this.config.maxWait);
       }
+      const free = MAX_QUEUED_LEARNS - this.queue.length;
+      for (const wake of this.roomWaiters.splice(0, Math.max(0, free))) wake();
     });
   }
 

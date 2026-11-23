@@ -11,7 +11,7 @@
  * Like realistic-integration.test.ts, only global `fetch` is stubbed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { FetchBrain, MAX_STASH_ENTRIES, MAX_STASH_BYTES, PRE_RECALL_STASH_WAIT_MS } from "../src/enhance";
+import { FetchBrain, MAX_STASH_ENTRIES, PRE_RECALL_STASH_WAIT_MS, __setStashBytesCapForTests } from "../src/enhance";
 import { FetchBrainClient } from "../src/client";
 import type { FetchBrainConfig, RecalledEvent } from "../src/types";
 
@@ -606,13 +606,15 @@ describe("stash eviction cap", () => {
 });
 
 describe("stash size cap", () => {
-  it("evicts by total size too: large pages can't hold more than MAX_STASH_BYTES in memory", async () => {
-    // 80 known pages of ~0.9MB: ~72MB together, over the 64MB cap, far under the count cap.
-    const blob = "x".repeat(900 * 1024);
+  afterEach(() => __setStashBytesCapForTests());
+
+  it("evicts by total size too: pages can't hold more than the byte cap in memory", async () => {
+    __setStashBytesCapForTests(8 * 1024 * 1024);
+    // 80 known pages of ~200KB: ~16MB together, over the (test) 8MB cap, far under the count cap.
+    const blob = "x".repeat(200 * 1024);
     const urls = Array.from({ length: 80 }, (_, i) => `https://site/p/${i}`);
     const api = createFakeApi(new Map(urls.map((u, i) => [u, { i, blob }])));
     stubFetch(api.fetchImpl as any);
-    expect(80 * blob.length).toBeGreaterThan(MAX_STASH_BYTES);
 
     const { crawler, enqueued } = createFakeCrawler(vi.fn());
     const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
@@ -630,6 +632,24 @@ describe("stash size cap", () => {
     await enhanced.requestHandler(oldest.context);
     expect(oldest.pushed[0].i).toBe(0);
     expect(api.recallCalls()).toHaveLength(enqueueCalls + 1);
+  });
+
+  it("never waits for stash room before the crawl starts (Crawlee's look-ahead must not stall run())", async () => {
+    __setStashBytesCapForTests(1024 * 1024);
+    // 1200 known pages of ~20KB (~24MB) pulled before any handler runs, cap 1MB:
+    // waiting here could only time out (PRE_RECALL_STASH_WAIT_MS per slice).
+    const blob = "x".repeat(20 * 1024);
+    const urls = Array.from({ length: 1200 }, (_, i) => `https://site/p/${i}`);
+    const api = createFakeApi(new Map(urls.map((u, i) => [u, { i, blob }])));
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+    const t0 = Date.now();
+    await enhanced.addRequests(urls);
+
+    expect(Date.now() - t0).toBeLessThan(PRE_RECALL_STASH_WAIT_MS / 10);
+    expect(enqueued).toHaveLength(1200);
   });
 });
 

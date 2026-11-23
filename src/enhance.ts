@@ -28,8 +28,15 @@ const SDK_USERDATA_KEYS = new Set(["fetchBrainRecalled", "fetchBrainData", "__fe
 // eviction targets entries least likely to still execute.
 export const MAX_STASH_ENTRIES = 5000;
 // ...and on their total size (JSON length), so pages of large records can't hold
-// hundreds of MB in a memory-limited actor before their requests run.
-export const MAX_STASH_BYTES = 64 * 1024 * 1024;
+// unbounded memory before their requests run. Sized so Crawlee's pre-crawl
+// look-ahead (~3000 requests) fits for pages averaging up to ~85KB: a smaller cap
+// evicts answers before the crawl starts, and each eviction is a second recall.
+export const MAX_STASH_BYTES = 256 * 1024 * 1024;
+let stashBytesCap = MAX_STASH_BYTES;
+/** @internal Tests only: exercising a 256MB cap for real would need ~1GB of test data. */
+export function __setStashBytesCapForTests(bytes?: number): void {
+  stashBytesCap = bytes ?? MAX_STASH_BYTES;
+}
 // Requests pre-recalled per step of a large addRequests() list (5 bulk calls).
 export const PRE_RECALL_SLICE = 500;
 // Longest a slice waits for stash room before degrading to FIFO eviction.
@@ -274,6 +281,8 @@ export class FetchBrain {
     // eviction at MAX_STASH_ENTRIES — an evicted entry degrades to handler-time recall.
     const preRecalledData = new Map<string, { data: LearnedData; bytes: number }>();
     let stashBytes = 0;
+    // Set by the first request handler call: until then nothing consumes the stash.
+    let crawlStarted = false;
     const stashDelete = (key: string): boolean => {
       const entry = preRecalledData.get(key);
       if (!entry) return false;
@@ -293,7 +302,7 @@ export class FetchBrain {
       while (
         preRecalledData.size > 0 &&
         ((!reStash && preRecalledData.size >= MAX_STASH_ENTRIES) ||
-          stashBytes + bytes > MAX_STASH_BYTES)
+          stashBytes + bytes > stashBytesCap)
       ) {
         const oldest = preRecalledData.keys().next().value;
         if (oldest === undefined) break;
@@ -324,6 +333,7 @@ export class FetchBrain {
 
     // Create wrapped handler
     const wrappedHandler = async (context: RequestHandlerContext) => {
+      crawlStarted = true;
       const { request } = context;
       const url = request.url;
       const label = request.label;
@@ -778,16 +788,14 @@ export class FetchBrain {
       // requests Crawlee drops as duplicates never drain; once a wait times out the
       // call stops waiting and degrades to eviction rather than stalling the crawl.
       const waitForStashRoom = async (needed: number, state: { gaveUp: boolean }) => {
+        // Before the first request handler runs nothing drains the stash, so a
+        // wait could only time out — and Crawlee pulls a look-ahead of requests
+        // before run() starts crawling, so waiting here would stall the start.
+        if (!crawlStarted) return;
         const deadline = Date.now() + PRE_RECALL_STASH_WAIT_MS;
-        // Room by count, and by size: assume the next slice's pages are as large
-        // as the ones already waiting.
-        const hasRoom = () => {
-          const avgBytes = preRecalledData.size > 0 ? stashBytes / preRecalledData.size : 0;
-          return (
-            preRecalledData.size + needed <= MAX_STASH_ENTRIES &&
-            stashBytes + avgBytes * needed <= MAX_STASH_BYTES
-          );
-        };
+        // Room by count, and by the bytes actually stashed (not a projection).
+        const hasRoom = () =>
+          preRecalledData.size + needed <= MAX_STASH_ENTRIES && stashBytes < stashBytesCap;
         while (!state.gaveUp && !hasRoom()) {
           if (Date.now() >= deadline) {
             state.gaveUp = true;
@@ -859,7 +867,7 @@ export class FetchBrain {
           // would only time out. Pre-recall what fits; the rest is recalled at
           // handler time (the same outcome eviction gave before lazy lists existed).
           const eager = batch.slice(0, MAX_STASH_ENTRIES);
-          for (let i = 0; i < eager.length && stashBytes < MAX_STASH_BYTES; i += PRE_RECALL_SLICE) {
+          for (let i = 0; i < eager.length && stashBytes < stashBytesCap; i += PRE_RECALL_SLICE) {
             await preRecallSlice(eager.slice(i, i + PRE_RECALL_SLICE), retryOnBlocked);
           }
           return originalAddRequests(batch, options);

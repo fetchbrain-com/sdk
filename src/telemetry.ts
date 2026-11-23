@@ -265,6 +265,10 @@ export class TelemetryBuffer {
     this.flushTimer = setInterval(() => {
       this.flush();
     }, this.flushInterval);
+    // A background flush must never keep the process alive: the buffer is
+    // created even with telemetry off, so a ref'd interval kept every plain
+    // Node script running after crawler.run() resolved.
+    this.flushTimer.unref?.();
   }
   
   /**

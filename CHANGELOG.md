@@ -31,15 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the first 5000 requests up front instead; the rest are recalled when they run.
 - A page whose data is over the API's 100KB limit is refused on its own, instead of failing
   its whole batch. The limit covers the page's records together, so the SDK warns the first time
-  a page is not learned, and the run summary's `learned` counts only accepted pages.
+  a page is not learned, and the run summary's `learned` counts only records from learns the
+  API accepted.
 - Background learns are capped at 3 requests in flight and a 500-entry backlog. When the API
   falls behind, request handlers wait up to 5s for room, so the crawl slows to the API's pace
   instead of growing memory without limit.
-- Pre-recalled pages waiting for their requests to run are capped at 64MB as well as 5000
-  pages, so large records can't exhaust a memory-limited actor.
-- A 401 (API key invalid or revoked) now switches FetchBrain off for the run with one
-  warning, instead of every request paying a failing round-trip. A 429 on recall pauses
-  recalls for the API's `Retry-After` (30s if none, at most 5 min); the crawl continues.
+- Pre-recalled pages waiting for their requests to run are capped at 256MB as well as 5000
+  pages, so large records can't exhaust a memory-limited actor. Pre-recall never waits for
+  room before the crawl starts, so large lists of big pages no longer stall `run()`.
+- A 401 (API key invalid or revoked) pauses FetchBrain calls for 60s at a time, with one
+  warning, instead of every request paying a failing round-trip; the crawl continues.
+- Plain Node scripts now exit when `crawler.run()` resolves: an internal flush timer kept
+  the process alive (Apify actors were unaffected: `Actor.exit()` ends the process).
 - Bulk recalls are sent 90 at a time (was 100), which also works on API versions that
   failed a recall with 97+ unknown items, so the SDK and API can deploy in either order.
 

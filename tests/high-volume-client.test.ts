@@ -230,30 +230,42 @@ describe("LearnBatcher concurrency and backlog caps", () => {
   });
 });
 
-describe("refusals that stop or pause calls", () => {
+describe("refusals that pause calls", () => {
   afterEach(() => vi.unstubAllGlobals());
   const unknownAll = (body: any) =>
     new Response(JSON.stringify({ known: [], unknown: body.items.map((i: any) => i.ref) }), { status: 200 });
 
-  it("401 (key invalid or revoked): warns once, then recalls and learns stop calling the API", async () => {
-    const calls = stubApi(() => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }));
+  it("401 (key invalid or revoked): warns once and pauses all calls for 60s, then tries the key again", async () => {
+    let rejected = true;
+    const calls = stubApi((_p, body) =>
+      rejected ? new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }) : unknownAll(body),
+    );
     const warn = vi.fn();
     const c = new FetchBrainClient({ apiKey: "fb_t", baseUrl: "http://x", batch: { maxSize: 1, maxWait: 0 } });
     (c as any).logger = { ...silent, warn };
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
 
     expect(await c.recall({ url: "https://p/1" })).toEqual({ known: false, fallback: true });
     const afterFirst = calls.length;
     expect(await c.recall({ url: "https://p/2" })).toEqual({ known: false, fallback: true });
     expect((await c.recallBulk([{ url: "https://p/3" }]))[0]).toEqual({ known: false, fallback: true });
     expect((await c.learn({ url: "https://p/4" }, { a: 1 })).status).toBe("rejected");
-    expect(calls.length).toBe(afterFirst); // nothing more sent
+    expect(calls.length).toBe(afterFirst); // nothing more sent during the pause
     expect(warn).toHaveBeenCalledTimes(1);
     expect(String(warn.mock.calls[0][0])).toMatch(/401/);
     expect(String(warn.mock.calls[0][0])).not.toMatch(/fb_t/); // never print the key
     expect(c.getCircuitState().state).toBe("closed"); // a 4xx is not an outage
+
+    // A key that just propagated: after the pause, calls go through again.
+    rejected = false;
+    clock.mockReturnValue(now + 61_000);
+    expect(await c.recall({ url: "https://p/5" })).toEqual({ known: false });
+    expect(calls.length).toBe(afterFirst + 1);
+    clock.mockRestore();
   });
 
-  it("429 on recall: pauses recalls for Retry-After, then resumes", async () => {
+  it("429 on recall does not pause recalls locally (the next recall still asks the API)", async () => {
     let limited = true;
     const calls = stubApi((_p, body) =>
       limited
@@ -261,18 +273,45 @@ describe("refusals that stop or pause calls", () => {
         : unknownAll(body),
     );
     const c = new FetchBrainClient({ apiKey: "fb_t", baseUrl: "http://x", batch: { maxSize: 1, maxWait: 0 } });
-    const now = Date.now();
-    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
 
     expect((await c.recall({ url: "https://p/1" })).fallback).toBe(true);
-    const afterFirst = calls.length;
     limited = false;
-    expect((await c.recall({ url: "https://p/2" })).fallback).toBe(true); // paused: no call
-    expect(calls.length).toBe(afterFirst);
+    expect(await c.recall({ url: "https://p/2" })).toEqual({ known: false });
+    expect(calls.filter((x) => x.path === "/v1/recall")).toHaveLength(2);
+    expect(c.getCircuitState().state).toBe("closed");
+  });
+});
 
-    clock.mockReturnValue(now + 2_100);
-    expect(await c.recall({ url: "https://p/3" })).toEqual({ known: false });
-    expect(calls.length).toBe(afterFirst + 1);
-    clock.mockRestore();
+describe("learn backlog wake-ups", () => {
+  it("a settling flush admits only as many waiters as there are free slots — none told 'room' is then dropped", async () => {
+    const { MAX_QUEUED_LEARNS } = await import("../src/batch");
+    const release: (() => void)[] = [];
+    const executor = vi.fn(async (entries: unknown[]) => {
+      await new Promise<void>((r) => release.push(r));
+      return { learned: entries.length, status: "success" as const };
+    });
+    const b = new LearnBatcher(executor, { maxSize: 50, maxWait: 1 }, silent as any);
+    for (let i = 0; i < 3 * 50 + MAX_QUEUED_LEARNS; i++) void b.learn({ url: `https://p/${i}` }, { i });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(b.isBacklogFull()).toBe(true);
+
+    // 120 handlers wait for room, then learn — exactly what enhance() does.
+    const outcomes = Array.from({ length: 120 }, async (_, i) => {
+      const room = await b.waitForRoom(10_000);
+      if (!room) return "timeout";
+      const res = await b.learn({ url: `https://w/${i}` }, { i });
+      return res.status;
+    });
+    // Keep releasing flushes until every waiter has been admitted and sent.
+    const settled = Promise.all(outcomes);
+    let done = false;
+    void settled.then(() => (done = true));
+    while (!done) {
+      release.shift()?.();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    const results = await settled;
+    expect(results.filter((r) => r === "rejected")).toHaveLength(0); // no "room" then backlog_full
+    expect(results.filter((r) => r === "success")).toHaveLength(120);
   });
 });
