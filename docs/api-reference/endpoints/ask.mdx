@@ -20,6 +20,12 @@ far, instead of looking up a single URL. Useful for cross-page questions like
   only for custom (non-Crawlee) integrations.
 </Note>
 
+<Note>
+  Answers span all your scrapers. Send
+  `X-FB-Context: {"FETCHBRAIN_SCRAPER_ID":"<name>"}` (or an `APIFY_ACTOR_ID`) to
+  narrow them to one scraper. See [Naming a scraper](/docs/api-reference/overview#naming-a-scraper).
+</Note>
+
 ## Request Body
 
 ```json
@@ -75,7 +81,7 @@ far, instead of looking up a single URL. Useful for cross-page questions like
 <CodeGroup>
 ```bash cURL
 curl -X POST "https://api.fetchbrain.com/v1/ask" \
-  -H "Authorization: Bearer fb_live_your_api_key" \
+  -H "Authorization: Bearer fb_your_api_key" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "which products are under $20?",
