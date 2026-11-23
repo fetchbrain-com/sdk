@@ -102,7 +102,7 @@ export interface FetchBrainConfig {
    */
   refreshOnRebuild?: boolean;
 
-  /** Request timeout in ms (default: 500ms for fast degradation) */
+  /** Request timeout in ms (default: 1500ms; see DEFAULT_TIMEOUT in client.ts) */
   timeout?: number;
 
   /** Enable debug logging */
@@ -132,12 +132,19 @@ export interface FetchBrainConfig {
   telemetry?: TelemetryConfig;
 }
 
+/**
+ * What one remembered request holds: the record the page pushed, or every
+ * record when the page pushed several (a listing page). Recalled arrays are
+ * pushed as-is — Crawlee's pushData accepts both shapes.
+ */
+export type LearnedData = Record<string, unknown> | Record<string, unknown>[];
+
 /** Info passed to `onRecalled` when remembered data is delivered in place of a live scrape */
 export interface RecalledEvent {
   url: string;
   label?: string;
   userData?: Record<string, unknown>;
-  data: Record<string, unknown>;
+  data: LearnedData;
 }
 
 /** The raw request the SDK forwards; the API derives identity from a subset. */
@@ -161,18 +168,18 @@ export interface RecallRequest {
 /** Single recall result (matched by ref) */
 export interface RecallResultItem {
   ref: string;
-  data?: Record<string, unknown>;
+  data?: LearnedData;
 }
 
 /** Recall response from the API */
 export interface RecallResponse {
-  known: { ref: string; data: Record<string, unknown> }[];
+  known: { ref: string; data: LearnedData }[];
   unknown: string[]; // refs
 }
 
 /** Learn request to the API */
 export interface LearnRequest {
-  entries: { request: RawRequest; data: Record<string, unknown> }[];
+  entries: { request: RawRequest; data: LearnedData }[];
   build?: string;
 }
 
@@ -195,7 +202,7 @@ export interface StatsResponse {
 /** Result of a recall */
 export interface RecallResult {
   known: boolean;
-  data?: Record<string, unknown>;
+  data?: LearnedData;
   // Note: No learnedAt
   fallback?: boolean; // True if circuit breaker triggered fallback
 }

@@ -88,7 +88,7 @@ That's it. Your handler only runs when there's something new to learn.
 | **Repeat requests** | Full fetch, every run | Recalled in milliseconds |
 | **Proxy & compute spend** | Pay per fetch, every run | Pay only for what it knows |
 | **Blocks & CAPTCHAs** | Every run risks them | Pre-recalled known requests skip the fetch |
-| **When the service is down** | — | Your crawl runs normally (circuit breaker, 500ms timeout) |
+| **When the service is down** | — | Your crawl runs normally (circuit breaker, 1.5s timeout) |
 | **Testing** | Mock it yourself | `MockFetchBrain` ships in the box |
 
 - **Recall before you fetch** — known requests are answered from memory; when they're recalled at enqueue time, the page is never fetched ([caveats](#recall-at-enqueue-time-prerecall))
@@ -253,7 +253,7 @@ interface FetchBrainConfig {
   onRecalled?: (event: RecalledEvent) => void | Promise<void>; // Per-record hook when recalled data is delivered
   extractForLearning?: (data: unknown) => Record<string, unknown>; // Transform each record before it is learned
   refreshOnRebuild?: boolean; // Scope learn, recall and ask to the current build (*_BUILD_ID env var) (default: false)
-  timeout?: number; // Handler-time recall, stats and telemetry timeout in ms (default: 500)
+  timeout?: number; // Handler-time recall, stats and telemetry timeout in ms (default: 1500)
   batch?: { maxSize?: number; maxWait?: number }; // Request batching (default: 50 items / 50ms)
   circuitBreaker?: {
     failureThreshold?: number; // Failures before the circuit opens (default: 3)
@@ -427,6 +427,25 @@ paid plan, `"byok"` with no linked provider — the response comes back with
 `status: "unavailable"`, which means the API itself is degraded or
 unreachable.
 
+## What gets learned from a page
+
+- Everything a request's handler pushes is learned **together, once the handler
+  succeeds**. A listing page that pushes 20 products is remembered as those 20
+  products and recalled as all 20, in order.
+- A handler that throws (even after pushing) teaches nothing for that request,
+  so a half-parsed page is never remembered; the retry learns it.
+- Learning happens in the background: `pushData` never waits for it, and
+  `crawler.run()` delivers every pending learn before it resolves. If the API
+  falls behind, a handler waits briefly (at most 5s, counted toward Crawlee's
+  `requestHandlerTimeoutSecs`) for learns to catch up;
+  past that the page is not learned, and the crawl carries on.
+- A page's data is learned whole or not at all, up to **100KB** (after
+  `extractForLearning`). A page over the limit is not learned and is fetched
+  again on later runs; the SDK warns the first time. A listing of many records
+  can pass 100KB even when each record is small — use `extractForLearning` to
+  keep only the fields you need.
+- The run summary's `learned` counts only records from learns the API accepted.
+
 ## Learning with `Dataset.pushData`
 
 > **Important:** the brain learns only from `context.pushData()` or the
@@ -493,11 +512,11 @@ Timeouts per call type:
 
 | Call | Timeout |
 | --- | --- |
-| Recall in the handler (batched) | `timeout` option, default 500ms |
+| Recall in the handler (batched) | `timeout` option, default 1.5s |
 | Recall at enqueue (`preRecall`, bulk) | 3s per chunk of up to 100 requests |
 | Learn (batched, sent in the background) | 5s |
 | `ask()` | 10s |
-| `stats()` and telemetry | `timeout` option, default 500ms |
+| `stats()` and telemetry | `timeout` option, default 1.5s |
 
 A FetchBrain outage costs you *optimization*, not your crawl: SDK calls
 degrade gracefully instead of throwing into it. The one deliberate

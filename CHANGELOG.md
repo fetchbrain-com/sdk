@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- For a page that pushed several records, `context.brain.data` and `RecalledEvent.data`
+  (`onRecalled`) are now an **array** of those records; a single-record page is still a
+  plain object. The type is `LearnedData` (object or array). Code that reads fields
+  directly, e.g. `brain.data.price`, needs `Array.isArray(brain.data)` first. Older SDKs
+  that recall a page a newer SDK learned see the array too.
+
+### Fixed
+- Pages that push several records (listings) are now learned as all of their records and
+  recalled as all of them, in order. Previously only one record per request survived.
+- `pushData` no longer waits for the learn round-trip; learns are sent in the background and
+  `run()` still delivers every one before it resolves (no learns lost at shutdown).
+- A request whose handler throws after pushing data is no longer learned.
+- Default `timeout` raised from 500ms to 1500ms. Measured recall answers are 0.2-0.5s plus
+  network, so under concurrency the old value timed out healthy calls and opened the breaker.
+- Account-level 4xx answers (e.g. 403 hard cap) no longer open the circuit breaker, so
+  learns the API would accept still reach it. 5xx and network errors still open it.
+- Seed lists over 500 requests are pre-recalled slice by slice as the crawl runs, so the
+  first request starts immediately and large lists (6000+) no longer evict pre-recalled
+  answers into a second, double-billed recall.
+  On Crawlee older than 3.13.9 (no lazy request lists) the SDK detects this and pre-recalls
+  the first 5000 requests up front instead; the rest are recalled when they run.
+- A page whose data is over the API's 100KB limit is refused on its own, instead of failing
+  its whole batch. The limit covers the page's records together, so the SDK warns the first time
+  a page is not learned, and the run summary's `learned` counts only records from learns the
+  API accepted.
+- Background learns are capped at 3 requests in flight and a 500-entry backlog. When the API
+  falls behind, request handlers wait up to 5s for room, so the crawl slows to the API's pace
+  instead of growing memory without limit.
+- Pre-recalled pages waiting for their requests to run are capped at 256MB as well as 5000
+  pages, so large records can't exhaust a memory-limited actor. Pre-recall never waits for
+  room before the crawl starts, so large lists of big pages no longer stall `run()`.
+- A 401 (API key invalid or revoked) pauses FetchBrain calls for 60s at a time, with one
+  warning, instead of every request paying a failing round-trip; the crawl continues.
+- Plain Node scripts now exit when `crawler.run()` resolves: an internal flush timer kept
+  the process alive (Apify actors were unaffected: `Actor.exit()` ends the process).
+- Bulk recalls are sent 90 at a time (was 100), which also works on API versions that
+  failed a recall with 97+ unknown items, so the SDK and API can deploy in either order.
+
 ## [0.6.0] - 2026-11-22
 
 ### Added

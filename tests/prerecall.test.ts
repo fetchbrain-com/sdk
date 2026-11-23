@@ -11,7 +11,7 @@
  * Like realistic-integration.test.ts, only global `fetch` is stubbed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { FetchBrain, MAX_STASH_ENTRIES } from "../src/enhance";
+import { FetchBrain, MAX_STASH_ENTRIES, PRE_RECALL_STASH_WAIT_MS, __setStashBytesCapForTests } from "../src/enhance";
 import { FetchBrainClient } from "../src/client";
 import type { FetchBrainConfig, RecalledEvent } from "../src/types";
 
@@ -63,6 +63,10 @@ function createFakeCrawler(handler: (ctx: any) => Promise<void>) {
     addRequests: vi.fn(async (reqs: any, options?: unknown) => {
       addRequestsArgs.push([reqs, options]);
       if (Array.isArray(reqs)) enqueued.push(...reqs);
+      // Like Crawlee, also accept (async) iterables — large lists arrive lazily.
+      else if (reqs && typeof reqs[Symbol.asyncIterator] === "function") {
+        for await (const r of reqs) enqueued.push(r);
+      }
     }),
     run: async () => {},
   };
@@ -578,8 +582,14 @@ describe("stash eviction cap", () => {
     const { crawler, enqueued } = createFakeCrawler(vi.fn());
     const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
 
-    await enhanced.addRequests(urls);
-    const enqueueCalls = api.recallCalls().length; // ceil(5001/100) chunked bulk calls
+    // Nothing executes during this enqueue, so the stash never drains: the last
+    // slice waits for room, gives up after PRE_RECALL_STASH_WAIT_MS, and evicts.
+    vi.useFakeTimers();
+    const adding = enhanced.addRequests(urls);
+    await vi.advanceTimersByTimeAsync(PRE_RECALL_STASH_WAIT_MS + 1_000);
+    await adding;
+    vi.useRealTimers();
+    const enqueueCalls = api.recallCalls().length; // ceil(5001/90) chunked bulk calls
 
     // Entry 1 survived — served from the stash, no extra API call.
     const survivor = makeContext(enqueued[1]);
@@ -592,6 +602,54 @@ describe("stash eviction cap", () => {
     await enhanced.requestHandler(evicted.context);
     expect(evicted.pushed).toEqual([{ i: 0 }]);
     expect(api.recallCalls()).toHaveLength(enqueueCalls + 1);
+  });
+});
+
+describe("stash size cap", () => {
+  afterEach(() => __setStashBytesCapForTests());
+
+  it("evicts by total size too: pages can't hold more than the byte cap in memory", async () => {
+    __setStashBytesCapForTests(8 * 1024 * 1024);
+    // 80 known pages of ~200KB: ~16MB together, over the (test) 8MB cap, far under the count cap.
+    const blob = "x".repeat(200 * 1024);
+    const urls = Array.from({ length: 80 }, (_, i) => `https://site/p/${i}`);
+    const api = createFakeApi(new Map(urls.map((u, i) => [u, { i, blob }])));
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+    await enhanced.addRequests(urls);
+    const enqueueCalls = api.recallCalls().length;
+
+    // The newest page is still stashed: served with no extra API call.
+    const newest = makeContext(enqueued[79]);
+    await enhanced.requestHandler(newest.context);
+    expect(newest.pushed[0].i).toBe(79);
+    expect(api.recallCalls()).toHaveLength(enqueueCalls);
+
+    // The oldest was evicted to stay under the size cap: one handler-time recall.
+    const oldest = makeContext(enqueued[0]);
+    await enhanced.requestHandler(oldest.context);
+    expect(oldest.pushed[0].i).toBe(0);
+    expect(api.recallCalls()).toHaveLength(enqueueCalls + 1);
+  });
+
+  it("never waits for stash room before the crawl starts (Crawlee's look-ahead must not stall run())", async () => {
+    __setStashBytesCapForTests(1024 * 1024);
+    // 1200 known pages of ~20KB (~24MB) pulled before any handler runs, cap 1MB:
+    // waiting here could only time out (PRE_RECALL_STASH_WAIT_MS per slice).
+    const blob = "x".repeat(20 * 1024);
+    const urls = Array.from({ length: 1200 }, (_, i) => `https://site/p/${i}`);
+    const api = createFakeApi(new Map(urls.map((u, i) => [u, { i, blob }])));
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createFakeCrawler(vi.fn());
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+    const t0 = Date.now();
+    await enhanced.addRequests(urls);
+
+    expect(Date.now() - t0).toBeLessThan(PRE_RECALL_STASH_WAIT_MS / 10);
+    expect(enqueued).toHaveLength(1200);
   });
 });
 
@@ -640,7 +698,7 @@ describe("stash overwrite", () => {
 });
 
 describe("recallBulk chunking", () => {
-  it("splits >100 items across multiple /v1/recall calls and preserves order", async () => {
+  it("splits into chunks of 90 (safe on API versions that fail at 97+) and preserves order", async () => {
     const known = new Map<string, Record<string, unknown>>([["https://site/p/0", { i: 0 }], ["https://site/p/149", { i: 149 }]]);
     const api = createFakeApi(known);
     stubFetch(api.fetchImpl as any);
@@ -650,8 +708,8 @@ describe("recallBulk chunking", () => {
     const results = await client.recallBulk(requests);
 
     expect(api.recallCalls()).toHaveLength(2);
-    expect(api.recallCalls()[0].body.items).toHaveLength(100);
-    expect(api.recallCalls()[1].body.items).toHaveLength(50);
+    expect(api.recallCalls()[0].body.items).toHaveLength(90);
+    expect(api.recallCalls()[1].body.items).toHaveLength(60);
     expect(results).toHaveLength(150);
     expect(results[0]).toMatchObject({ known: true, data: { i: 0 } });
     expect(results[1].known).toBe(false);
@@ -689,5 +747,99 @@ describe("recallBulk chunking", () => {
     expect(results[0]).toMatchObject({ known: true, data: { i: 0 } });
     expect(results[250]).toMatchObject({ known: true, data: { i: 250 } }); // order preserved
     expect(results[1].known).toBe(false);
+  });
+});
+
+describe("large lists on Crawlee < 3.13.9 (no iterable addRequests input)", () => {
+  /** Old Crawlee's addRequestsBatched: `for (const request of requests)` — async generators throw. */
+  function createOldCrawler() {
+    const enqueued: any[] = [];
+    const crawler: any = {
+      requestHandler: async () => {},
+      addRequests: vi.fn(async (reqs: any) => {
+        for (const r of reqs) enqueued.push(r); // TypeError: reqs is not iterable
+      }),
+      run: async () => {},
+    };
+    return { crawler, enqueued };
+  }
+
+  it("falls back to an eagerly pre-recalled array instead of crashing the crawl", async () => {
+    const N = 1200; // > PRE_RECALL_SLICE, so the lazy path is attempted first
+    const urls = Array.from({ length: N }, (_, i) => `https://site/p/${i}`);
+    const api = createFakeApi(new Map([[urls[0], { title: "zero" }], [urls[N - 1], { title: "last" }]]));
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createOldCrawler();
+    const original = crawler.addRequests;
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+
+    await enhanced.addRequests(urls); // must not throw
+
+    expect(original).toHaveBeenCalledTimes(2); // rejected lazy attempt + array retry
+    expect(Array.isArray(original.mock.calls[1][0])).toBe(true);
+    const firstRun = enqueued;
+    expect(firstRun).toHaveLength(N);
+    expect(firstRun[0].skipNavigation).toBe(true);
+    expect(firstRun[N - 1].skipNavigation).toBe(true);
+    expect(firstRun[1].userData.__fetchBrainResult).toEqual({ known: false });
+    // Each URL recalled exactly once: the rejected lazy attempt recalled nothing.
+    const recalled = api.recallCalls().reduce((n, c) => n + c.body.items.length, 0);
+    expect(recalled).toBe(N);
+  });
+
+  it("pre-recalls at most MAX_STASH_ENTRIES eagerly; the rest is left to handler-time recall", async () => {
+    const N = MAX_STASH_ENTRIES + 300;
+    const urls = Array.from({ length: N }, (_, i) => `https://site/p/${i}`);
+    const api = createFakeApi(new Map());
+    stubFetch(api.fetchImpl as any);
+
+    const { crawler, enqueued } = createOldCrawler();
+    const original = crawler.addRequests;
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+    await enhanced.addRequests(urls);
+
+    expect(enqueued).toHaveLength(N);
+    const recalled = api.recallCalls().reduce((n, c) => n + c.body.items.length, 0);
+    expect(recalled).toBe(MAX_STASH_ENTRIES);
+    expect(enqueued[MAX_STASH_ENTRIES - 1].userData.__fetchBrainResult).toEqual({ known: false });
+    expect(enqueued[MAX_STASH_ENTRIES].userData?.__fetchBrainResult).toBeUndefined();
+  });
+
+  it("rethrows errors that are not an input-shape rejection (no silent retry)", async () => {
+    const api = createFakeApi(new Map());
+    stubFetch(api.fetchImpl as any);
+    const crawler: any = {
+      requestHandler: async () => {},
+      addRequests: vi.fn(async () => {
+        throw new Error("Request queue storage unavailable");
+      }),
+      run: async () => {},
+    };
+    const original = crawler.addRequests;
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+    const urls = Array.from({ length: 600 }, (_, i) => `https://site/p/${i}`);
+
+    await expect(enhanced.addRequests(urls)).rejects.toThrow("Request queue storage unavailable");
+    expect(original).toHaveBeenCalledTimes(1);
+    expect(api.recallCalls()).toHaveLength(0);
+  });
+
+  it("rethrows a mid-iteration error instead of re-adding requests Crawlee already pulled", async () => {
+    const api = createFakeApi(new Map());
+    stubFetch(api.fetchImpl as any);
+    const crawler: any = {
+      requestHandler: async () => {},
+      addRequests: vi.fn(async (reqs: any) => {
+        for await (const _r of reqs) throw new TypeError("boom after first pull");
+      }),
+      run: async () => {},
+    };
+    const original = crawler.addRequests;
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
+    const urls = Array.from({ length: 600 }, (_, i) => `https://site/p/${i}`);
+
+    await expect(enhanced.addRequests(urls)).rejects.toThrow("boom after first pull");
+    expect(original).toHaveBeenCalledTimes(1);
   });
 });

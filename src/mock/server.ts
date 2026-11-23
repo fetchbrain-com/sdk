@@ -17,6 +17,7 @@ import type {
   StatsResponse,
   AskResponse,
   MemoryDepth,
+  LearnedData,
 } from "../types";
 
 const app = express();
@@ -30,7 +31,7 @@ const ALL_MEMORY_DEPTHS: MemoryDepth[] = ["fresh", "recent", "standard", "deep"]
 // Remembered data (the brain's memory)
 const knowledge = new Map<
   string,
-  { url: string; data: Record<string, unknown>; learnedAt: string }
+  { url: string; data: LearnedData; learnedAt: string }
 >();
 
 // Stats tracking
