@@ -1,5 +1,13 @@
 import type { BatchConfig, LearnedData, RecallResult, Logger, LearnResponse, RawRequest } from "./types";
 
+/**
+ * Learns are sent in the background, so nothing ties their rate to the crawl's
+ * own concurrency. These caps keep a slow API from piling up open requests
+ * (each up to 50 entries x 100KB) and unbounded memory in the scraper.
+ */
+export const MAX_CONCURRENT_LEARN_FLUSHES = 3;
+export const MAX_QUEUED_LEARNS = 500;
+
 const DEFAULT_CONFIG: BatchConfig = {
   maxSize: 50,
   maxWait: 50, // 50ms
@@ -152,6 +160,8 @@ export class LearnBatcher {
   private logger: Logger;
   /** Flushes whose API call has not settled yet (awaited by forceFlush). */
   private inFlight = new Set<Promise<void>>();
+  /** Callers of waitForRoom(), woken whenever a flush settles. */
+  private roomWaiters: (() => void)[] = [];
 
   constructor(
     executor: LearnBatchExecutor,
@@ -170,12 +180,18 @@ export class LearnBatcher {
     request: RawRequest,
     data: LearnedData,
   ): Promise<LearnResponse> {
+    // Bounded backlog: past the cap the entry is dropped (not learned) rather
+    // than held in memory without limit. Callers that can wait use waitForRoom().
+    if (this.queue.length >= MAX_QUEUED_LEARNS) {
+      this.logger.debug("Learn backlog full; not learning this entry");
+      return { status: "rejected", learned: 0, errors: ["backlog_full"] };
+    }
     return new Promise((resolve, reject) => {
       this.queue.push({ entry: { request, data }, resolve, reject });
 
       // Flush immediately if batch is full
       if (this.queue.length >= this.config.maxSize) {
-        void this.flush();
+        this.flush();
         return;
       }
 
@@ -186,14 +202,56 @@ export class LearnBatcher {
     });
   }
 
+  /** True when another learn() would be dropped for lack of backlog room. */
+  isBacklogFull(): boolean {
+    return this.queue.length >= MAX_QUEUED_LEARNS;
+  }
+
   /**
-   * Flush the current batch
+   * Wait until the backlog has room, at most `timeoutMs`. Resolves true when
+   * there is room. Bounded so a slow API slows the crawl but never stalls it.
    */
-  private flush(): Promise<void> {
+  async waitForRoom(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (this.isBacklogFull()) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(done, remaining);
+        function done() {
+          clearTimeout(timer);
+          resolve();
+        }
+        this.roomWaiters.push(done);
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Start sending the next batch, unless MAX_CONCURRENT_LEARN_FLUSHES are
+   * already in flight — a settling flush starts the next one.
+   */
+  private flush(): void {
+    if (this.inFlight.size >= MAX_CONCURRENT_LEARN_FLUSHES) {
+      if (this.flushTimeout) {
+        clearTimeout(this.flushTimeout);
+        this.flushTimeout = null;
+      }
+      return;
+    }
     const run = this.flushOnce();
     this.inFlight.add(run);
-    void run.finally(() => this.inFlight.delete(run));
-    return run;
+    void run.finally(() => {
+      this.inFlight.delete(run);
+      const waiters = this.roomWaiters.splice(0);
+      for (const wake of waiters) wake();
+      if (this.queue.length >= this.config.maxSize) {
+        this.flush();
+      } else if (this.queue.length > 0 && !this.flushTimeout) {
+        this.flushTimeout = setTimeout(() => this.flush(), this.config.maxWait);
+      }
+    });
   }
 
   private async flushOnce(): Promise<void> {
@@ -225,11 +283,7 @@ export class LearnBatcher {
         r.reject(error as Error);
       }
     }
-
-    // If there are more items in queue, schedule another flush
-    if (this.queue.length > 0) {
-      this.flushTimeout = setTimeout(() => this.flush(), this.config.maxWait);
-    }
+    // The next batch is started by flush()'s settle handler (concurrency-capped).
   }
 
   /**
@@ -239,7 +293,7 @@ export class LearnBatcher {
     // Drain everything queued (possibly several batches) AND wait for flushes
     // started earlier — otherwise learns still in flight are lost at shutdown.
     while (this.queue.length > 0 || this.inFlight.size > 0) {
-      if (this.queue.length > 0) void this.flush();
+      if (this.queue.length > 0) this.flush();
       await Promise.allSettled([...this.inFlight]);
     }
   }

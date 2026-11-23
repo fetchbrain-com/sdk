@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- For a page that pushed several records, `context.brain.data` and `RecalledEvent.data`
+  (`onRecalled`) are now an **array** of those records; a single-record page is still a
+  plain object. The type is `LearnedData` (object or array). Code that reads fields
+  directly, e.g. `brain.data.price`, needs `Array.isArray(brain.data)` first. Older SDKs
+  that recall a page a newer SDK learned see the array too.
+
 ### Fixed
 - Pages that push several records (listings) are now learned as all of their records and
   recalled as all of them, in order. Previously only one record per request survived.
@@ -20,7 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Seed lists over 500 requests are pre-recalled slice by slice as the crawl runs, so the
   first request starts immediately and large lists (6000+) no longer evict pre-recalled
   answers into a second, double-billed recall.
-- A single record over the API's 100KB limit is dropped instead of failing its whole batch.
+  On Crawlee older than 3.13.9 (no lazy request lists) the SDK detects this and pre-recalls
+  the first 5000 requests up front instead; the rest are recalled when they run.
+- A page whose data is over the API's 100KB limit is refused on its own, instead of failing
+  its whole batch. The limit covers the page's records together, so the SDK warns the first time
+  a page is not learned, and the run summary's `learned` counts only accepted pages.
+- Background learns are capped at 3 requests in flight and a 500-entry backlog. When the API
+  falls behind, request handlers wait up to 5s for room, so the crawl slows to the API's pace
+  instead of growing memory without limit.
+- Pre-recalled pages waiting for their requests to run are capped at 64MB as well as 5000
+  pages, so large records can't exhaust a memory-limited actor.
+- A 401 (API key invalid or revoked) now switches FetchBrain off for the run with one
+  warning, instead of every request paying a failing round-trip. A 429 on recall pauses
+  recalls for the API's `Retry-After` (30s if none, at most 5 min); the crawl continues.
+- Bulk recalls are sent 90 at a time (was 100), which also works on API versions that
+  failed a recall with 97+ unknown items, so the SDK and API can deploy in either order.
 
 ## [0.6.0] - 2026-11-22
 

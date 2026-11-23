@@ -27,10 +27,26 @@ const SDK_USERDATA_KEYS = new Set(["fetchBrainRecalled", "fetchBrainData", "__fe
 // learned records, so the worst case is roughly cap × record size; oldest-first
 // eviction targets entries least likely to still execute.
 export const MAX_STASH_ENTRIES = 5000;
+// ...and on their total size (JSON length), so pages of large records can't hold
+// hundreds of MB in a memory-limited actor before their requests run.
+export const MAX_STASH_BYTES = 64 * 1024 * 1024;
 // Requests pre-recalled per step of a large addRequests() list (5 bulk calls).
 export const PRE_RECALL_SLICE = 500;
 // Longest a slice waits for stash room before degrading to FIFO eviction.
 export const PRE_RECALL_STASH_WAIT_MS = 30_000;
+// Longest a request handler waits for room in a full background learn backlog.
+export const LEARN_ROOM_WAIT_MS = 5_000;
+
+/**
+ * True when addRequests() rejected its input's shape rather than failing for some
+ * other reason: Crawlee < 3.13.9 iterates it as an array (`TypeError: requests is
+ * not iterable`, `requests.map is not a function`) or type-checks it as one.
+ */
+export function isIterableInputRejection(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /iterable|\barray\b/i.test(message);
+}
 
 /**
  * Snapshot the raw request the SDK forwards (credentials + SDK userData removed).
@@ -228,6 +244,8 @@ export class FetchBrain {
       dropped: 0, // enqueue-time fetch skipped, but remembered data gone by execution
       startTime: 0,
     };
+    // Background learns whose result has not been counted into runStats yet.
+    const pendingLearns = new Set<Promise<void>>();
 
     // Get original request handler
     const originalHandler =
@@ -254,7 +272,15 @@ export class FetchBrain {
     // to one batched recall. Entries are deleted on consumption; entries whose request
     // never executes (e.g. a resumed persisted queue dedups it) are bounded by FIFO
     // eviction at MAX_STASH_ENTRIES — an evicted entry degrades to handler-time recall.
-    const preRecalledData = new Map<string, LearnedData>();
+    const preRecalledData = new Map<string, { data: LearnedData; bytes: number }>();
+    let stashBytes = 0;
+    const stashDelete = (key: string): boolean => {
+      const entry = preRecalledData.get(key);
+      if (!entry) return false;
+      preRecalledData.delete(key);
+      stashBytes -= entry.bytes;
+      return true;
+    };
     // Identity key: `uniqueKey ?? url` folds Crawlee's GET default (uniqueKey = url), so
     // the enqueue-time key (often no explicit uniqueKey yet) matches the handler-time key.
     const stashKey = (r: { url: string; method?: string; uniqueKey?: string }) =>
@@ -262,11 +288,19 @@ export class FetchBrain {
     const stashSet = (key: string, data: LearnedData) => {
       // Re-stashing an existing key must not evict an unrelated entry; delete+set
       // also moves the key to the back of the FIFO (a re-enqueue is recent again).
-      if (!preRecalledData.delete(key) && preRecalledData.size >= MAX_STASH_ENTRIES) {
+      const reStash = stashDelete(key);
+      const bytes = JSON.stringify(data).length;
+      while (
+        preRecalledData.size > 0 &&
+        ((!reStash && preRecalledData.size >= MAX_STASH_ENTRIES) ||
+          stashBytes + bytes > MAX_STASH_BYTES)
+      ) {
         const oldest = preRecalledData.keys().next().value;
-        if (oldest !== undefined) preRecalledData.delete(oldest);
+        if (oldest === undefined) break;
+        stashDelete(oldest);
       }
-      preRecalledData.set(key, data);
+      preRecalledData.set(key, { data, bytes });
+      stashBytes += bytes;
     };
     // Consume a stashed payload. Crawlee computes uniqueKey (a NORMALIZED url — host
     // lowercased, fragment stripped) at Request construction, AFTER the enqueue-time
@@ -276,10 +310,10 @@ export class FetchBrain {
     // same assumption.
     const stashTake = (r: { url: string; method?: string; uniqueKey?: string }) => {
       for (const key of [stashKey(r), `${(r.method ?? "GET").toUpperCase()} ${r.url}`]) {
-        const data = preRecalledData.get(key);
-        if (data) {
-          preRecalledData.delete(key); // consumed — keep the map from growing over long crawls
-          return data;
+        const entry = preRecalledData.get(key);
+        if (entry) {
+          stashDelete(key); // consumed — keep the map from growing over long crawls
+          return entry.data;
         }
       }
       return undefined;
@@ -482,10 +516,19 @@ export class FetchBrain {
         // half-parsed page is never remembered). Not awaited: the learn batcher
         // sends it in the background and run() flushes whatever is still pending.
         if (learnItems.length > 0 && !usedAIData && !aiResult.known) {
-          runStats.learned += learnItems.length;
-          void client
+          // When the background backlog is full (API slower than the crawl), hold
+          // this handler briefly so the crawl slows to the API's pace. Bounded:
+          // past the wait the learn is dropped, never the crawl stalled.
+          await client.waitForLearnRoom(LEARN_ROOM_WAIT_MS);
+          const pending = client
             .learn(rawRequest, learnItems.length === 1 ? learnItems[0] : learnItems)
+            .then((res) => {
+              // Count only what the API accepted (not refused, oversized, paused).
+              if (res.status !== "rejected") runStats.learned += learnItems.length;
+            })
             .catch((learnErr) => logger.debug(`Learn failed: ${learnErr}`));
+          pendingLearns.add(pending);
+          void pending.finally(() => pendingLearns.delete(pending));
         }
 
         // Collect telemetry (if enabled) - behind the scenes
@@ -603,6 +646,8 @@ export class FetchBrain {
           // Flush pending learn requests before shutdown
           logger.debug("Flushing pending learn requests on crawl complete");
           await client.flushLearnBatch();
+          // Let each learn's result land in runStats before the summary prints.
+          await Promise.allSettled([...pendingLearns]);
 
           // Flush telemetry buffer when crawl completes
           if (telemetryConfig.enabled) {
@@ -734,7 +779,16 @@ export class FetchBrain {
       // call stops waiting and degrades to eviction rather than stalling the crawl.
       const waitForStashRoom = async (needed: number, state: { gaveUp: boolean }) => {
         const deadline = Date.now() + PRE_RECALL_STASH_WAIT_MS;
-        while (!state.gaveUp && preRecalledData.size + needed > MAX_STASH_ENTRIES) {
+        // Room by count, and by size: assume the next slice's pages are as large
+        // as the ones already waiting.
+        const hasRoom = () => {
+          const avgBytes = preRecalledData.size > 0 ? stashBytes / preRecalledData.size : 0;
+          return (
+            preRecalledData.size + needed <= MAX_STASH_ENTRIES &&
+            stashBytes + avgBytes * needed <= MAX_STASH_BYTES
+          );
+        };
+        while (!state.gaveUp && !hasRoom()) {
           if (Date.now() >= deadline) {
             state.gaveUp = true;
             logger.debug("preRecall: stash still full after waiting; continuing (oldest payloads may be evicted)");
@@ -779,7 +833,9 @@ export class FetchBrain {
         // and the rest in the background (its queue stays unfinished meanwhile), so
         // crawling starts after one slice instead of after the whole list.
         const state = { gaveUp: false };
+        let started = false;
         async function* lazilyRecalled() {
+          started = true;
           for (let i = 0; i < batch.length; i += PRE_RECALL_SLICE) {
             const slice = batch.slice(i, i + PRE_RECALL_SLICE);
             await waitForStashRoom(slice.length, state);
@@ -787,7 +843,27 @@ export class FetchBrain {
             yield* slice;
           }
         }
-        return originalAddRequests(lazilyRecalled(), options);
+        try {
+          return await originalAddRequests(lazilyRecalled(), options);
+        } catch (err) {
+          // Iterable input to addRequests only exists since Crawlee 3.13.9; older
+          // versions reject it up front ("requests is not iterable" / an array
+          // type check) before pulling a single request. Only in that case — the
+          // generator never started, so nothing was recalled or enqueued — retry
+          // with a plain array. Any other error is the caller's and is rethrown.
+          if (started || !isIterableInputRejection(err)) throw err;
+          logger.debug(
+            "preRecall: this Crawlee version does not accept lazy request lists; pre-recalling eagerly",
+          );
+          // The crawl has not started, so nothing drains the stash: waiting for room
+          // would only time out. Pre-recall what fits; the rest is recalled at
+          // handler time (the same outcome eviction gave before lazy lists existed).
+          const eager = batch.slice(0, MAX_STASH_ENTRIES);
+          for (let i = 0; i < eager.length && stashBytes < MAX_STASH_BYTES; i += PRE_RECALL_SLICE) {
+            await preRecallSlice(eager.slice(i, i + PRE_RECALL_SLICE), retryOnBlocked);
+          }
+          return originalAddRequests(batch, options);
+        }
       };
     }
 

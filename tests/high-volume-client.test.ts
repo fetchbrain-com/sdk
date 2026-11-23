@@ -111,3 +111,168 @@ describe("batchers at shutdown and under concurrency", () => {
     expect(b.getQueueSize()).toBe(0);
   });
 });
+
+describe("oversized pages and the learn backlog", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("refuses an oversized page on its own result, warns once, and never sends it", async () => {
+    const calls = stubApi((_p, body) =>
+      new Response(JSON.stringify({ learned: body.entries.length, status: "success" }), { status: 201 }),
+    );
+    const warn = vi.fn();
+    const c = new FetchBrainClient({ apiKey: "fb_t", baseUrl: "http://x", batch: { maxSize: 3, maxWait: 5 } });
+    (c as any).logger = { ...silent, warn };
+    // A listing page: 100 records of ~1.5KB, 150KB together — each record fits alone.
+    const listing = Array.from({ length: 100 }, (_, i) => ({ i, blob: "x".repeat(1500) }));
+
+    const [small, big, big2] = await Promise.all([
+      c.learn({ url: "https://p/a" }, { a: 1 }),
+      c.learn({ url: "https://p/listing" }, listing),
+      c.learn({ url: "https://p/listing2" }, listing),
+    ]);
+
+    expect(small.status).toBe("success");
+    expect(big).toEqual({ status: "rejected", learned: 0, errors: ["too_large"] });
+    expect(big2.status).toBe("rejected");
+    expect(warn).toHaveBeenCalledTimes(1); // once, not per page
+    expect(String(warn.mock.calls[0][0])).toMatch(/not learned/);
+    const sent = calls.filter((x) => x.path === "/v1/learn").flatMap((x) => x.body.entries);
+    expect(sent.map((e: any) => e.request.url)).toEqual(["https://p/a"]);
+  });
+
+  it("checks the size after extractForLearning, so trimming fields makes a page learnable", async () => {
+    const calls = stubApi((_p, body) =>
+      new Response(JSON.stringify({ learned: body.entries.length, status: "success" }), { status: 201 }),
+    );
+    const c = new FetchBrainClient({
+      apiKey: "fb_t",
+      baseUrl: "http://x",
+      batch: { maxSize: 1, maxWait: 0 },
+      extractForLearning: (d: any) => ({ i: d.i }),
+    });
+    const listing = Array.from({ length: 100 }, (_, i) => ({ i, blob: "x".repeat(1500) }));
+    const res = await c.learn({ url: "https://p/listing" }, listing);
+    expect(res.status).toBe("success");
+    const sent = calls.filter((x) => x.path === "/v1/learn").flatMap((x) => x.body.entries);
+    expect(sent[0].data).toHaveLength(100);
+    expect(sent[0].data[0]).toEqual({ i: 0 });
+  });
+});
+
+describe("LearnBatcher concurrency and backlog caps", () => {
+  it(`never has more than ${3} learn requests in flight, and still drains everything`, async () => {
+    const { MAX_CONCURRENT_LEARN_FLUSHES } = await import("../src/batch");
+    let inFlight = 0;
+    let peak = 0;
+    const release: (() => void)[] = [];
+    const executor = vi.fn(async (entries: unknown[]) => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise<void>((r) => release.push(r));
+      inFlight--;
+      return { learned: entries.length, status: "success" as const };
+    });
+    const b = new LearnBatcher(executor, { maxSize: 10, maxWait: 1 }, silent as any);
+
+    const all = Array.from({ length: 100 }, (_, i) => b.learn({ url: `https://p/${i}` }, { i }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(executor).toHaveBeenCalledTimes(MAX_CONCURRENT_LEARN_FLUSHES);
+
+    // Release flushes as they arrive until the whole queue is sent.
+    const done = b.forceFlush();
+    while (executor.mock.calls.length < 10 || release.length > 0) {
+      release.shift()?.();
+      await new Promise((r) => setTimeout(r, 1));
+    }
+    await done;
+    const results = await Promise.all(all);
+    expect(results.every((r) => r.status === "success")).toBe(true);
+    expect(executor).toHaveBeenCalledTimes(10);
+    expect(peak).toBe(MAX_CONCURRENT_LEARN_FLUSHES);
+  });
+
+  it("drops learns past the backlog cap instead of holding them in memory", async () => {
+    const { MAX_QUEUED_LEARNS } = await import("../src/batch");
+    const executor = vi.fn(() => new Promise<never>(() => {})); // API never answers
+    const b = new LearnBatcher(executor as any, { maxSize: 50, maxWait: 1 }, silent as any);
+
+    for (let i = 0; i < 3 * 50 + MAX_QUEUED_LEARNS; i++) void b.learn({ url: `https://p/${i}` }, { i });
+    await new Promise((r) => setTimeout(r, 5)); // 3 batches in flight, the rest queued
+    expect(b.isBacklogFull()).toBe(true);
+    expect(await b.learn({ url: "https://p/over" }, {})).toEqual({
+      status: "rejected",
+      learned: 0,
+      errors: ["backlog_full"],
+    });
+    // waitForRoom is bounded: a stuck API costs at most the timeout.
+    const t0 = Date.now();
+    expect(await b.waitForRoom(30)).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(500);
+  });
+
+  it("waitForRoom resolves as soon as a settling flush makes room", async () => {
+    const { MAX_QUEUED_LEARNS } = await import("../src/batch");
+    const release: (() => void)[] = [];
+    const executor = vi.fn(async (entries: unknown[]) => {
+      await new Promise<void>((r) => release.push(r));
+      return { learned: entries.length, status: "success" as const };
+    });
+    const b = new LearnBatcher(executor, { maxSize: 50, maxWait: 1 }, silent as any);
+    for (let i = 0; i < 3 * 50 + MAX_QUEUED_LEARNS; i++) void b.learn({ url: `https://p/${i}` }, { i });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(b.isBacklogFull()).toBe(true);
+
+    const waiting = b.waitForRoom(5_000);
+    release.shift()!(); // one batch settles → the next batch starts → 50 slots free
+    expect(await waiting).toBe(true);
+    expect(b.isBacklogFull()).toBe(false);
+    release.splice(0).forEach((r) => r());
+  });
+});
+
+describe("refusals that stop or pause calls", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const unknownAll = (body: any) =>
+    new Response(JSON.stringify({ known: [], unknown: body.items.map((i: any) => i.ref) }), { status: 200 });
+
+  it("401 (key invalid or revoked): warns once, then recalls and learns stop calling the API", async () => {
+    const calls = stubApi(() => new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }));
+    const warn = vi.fn();
+    const c = new FetchBrainClient({ apiKey: "fb_t", baseUrl: "http://x", batch: { maxSize: 1, maxWait: 0 } });
+    (c as any).logger = { ...silent, warn };
+
+    expect(await c.recall({ url: "https://p/1" })).toEqual({ known: false, fallback: true });
+    const afterFirst = calls.length;
+    expect(await c.recall({ url: "https://p/2" })).toEqual({ known: false, fallback: true });
+    expect((await c.recallBulk([{ url: "https://p/3" }]))[0]).toEqual({ known: false, fallback: true });
+    expect((await c.learn({ url: "https://p/4" }, { a: 1 })).status).toBe("rejected");
+    expect(calls.length).toBe(afterFirst); // nothing more sent
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toMatch(/401/);
+    expect(String(warn.mock.calls[0][0])).not.toMatch(/fb_t/); // never print the key
+    expect(c.getCircuitState().state).toBe("closed"); // a 4xx is not an outage
+  });
+
+  it("429 on recall: pauses recalls for Retry-After, then resumes", async () => {
+    let limited = true;
+    const calls = stubApi((_p, body) =>
+      limited
+        ? new Response(JSON.stringify({ error: "rate_limited" }), { status: 429, headers: { "Retry-After": "2" } })
+        : unknownAll(body),
+    );
+    const c = new FetchBrainClient({ apiKey: "fb_t", baseUrl: "http://x", batch: { maxSize: 1, maxWait: 0 } });
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+
+    expect((await c.recall({ url: "https://p/1" })).fallback).toBe(true);
+    const afterFirst = calls.length;
+    limited = false;
+    expect((await c.recall({ url: "https://p/2" })).fallback).toBe(true); // paused: no call
+    expect(calls.length).toBe(afterFirst);
+
+    clock.mockReturnValue(now + 2_100);
+    expect(await c.recall({ url: "https://p/3" })).toEqual({ known: false });
+    expect(calls.length).toBe(afterFirst + 1);
+    clock.mockRestore();
+  });
+});

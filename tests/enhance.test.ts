@@ -13,6 +13,7 @@ vi.mock("../src/client", () => {
     FetchBrainClient: vi.fn().mockImplementation(() => ({
       recall: mockQuery,
       learn: mockLearn,
+      waitForLearnRoom: vi.fn().mockResolvedValue(true),
       stats: mockStats,
       sendTelemetry: mockSendTelemetry,
       getConfig: () => ({}),

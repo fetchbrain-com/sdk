@@ -118,6 +118,29 @@ describe("multi-item pages", () => {
     expect(api.learns().map((e: any) => e.data)).toEqual([[{ n: 1 }, { n: 2 }]]);
   });
 
+  it("an oversized listing page is not learned, is warned about once, and is not counted as learned", async () => {
+    const api = memoryApi();
+    vi.spyOn(globalThis, "fetch").mockImplementation(api.impl as any);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    // 100 records of ~1.5KB: each fits the 100KB limit alone, the page does not.
+    const c = crawler(async ({ request, pushData }: any) => {
+      if (request.uniqueKey === "small-1") return pushData({ ok: true });
+      for (let i = 0; i < 100; i++) await pushData({ i, blob: "x".repeat(1500) });
+    }, {});
+    await c.run([
+      { url: `${base}/p/big1`, uniqueKey: "big-1" },
+      { url: `${base}/p/big2`, uniqueKey: "big-2" },
+      { url: `${base}/p/small`, uniqueKey: "small-1" },
+    ]);
+
+    expect(api.learns().map((e: any) => e.request.uniqueKey)).toEqual(["small-1"]);
+    const warnings = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("learn limit"));
+    expect(warnings).toHaveLength(1);
+    const summary = info.mock.calls.map((c) => String(c[0])).find((m) => m.includes("Finished!"));
+    expect(summary).toMatch(/learned: 1,/); // the small page only — not 201
+  });
+
   it("a handler that fails after pushing data does not teach that partial page", async () => {
     const api = memoryApi();
     vi.spyOn(globalThis, "fetch").mockImplementation(api.impl as any);

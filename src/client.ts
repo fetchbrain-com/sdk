@@ -28,7 +28,10 @@ const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 const DEFAULT_TIMEOUT = 1500;
 const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
 const BULK_RECALL_TIMEOUT = 3000; // Enqueue-time pre-recall is off the per-request hot path: favor reliability over fast-fail
-const MAX_BULK_ITEMS = 100; // API's MAX_ITEMS_PER_REQUEST — recallBulk chunks to stay under it
+// API's MAX_ITEMS_PER_REQUEST is 100, but API versions before the high-volume fix
+// fail a recall with 97+ unknown items (database variable limit). 90 works on both,
+// so this SDK is safe whichever side deploys first.
+const MAX_BULK_ITEMS = 90;
 const BULK_RECALL_CONCURRENCY = 5; // Chunks in flight at once — caps enqueue latency for huge seed lists without stampeding the API
 const MAX_LEARN_ENTRIES = 50; // API's MAX_ENTRIES_PER_REQUEST for /v1/learn
 const MAX_LEARN_DATA_BYTES = 100 * 1024; // API's per-entry cap (JSON length of data)
@@ -133,6 +136,12 @@ export class FetchBrainClient {
    * learn cap — the start of the next UTC month, when the cap resets. 0 = not paused.
    */
   private learnPausedUntil = 0;
+  /** Set by a 429 on recall: recalls answer "fallback" until then (not the breaker). */
+  private recallPausedUntil = 0;
+  /** Set by a 401: the key is invalid or revoked, so every call would fail. */
+  private keyRejected = false;
+  /** The oversized-page warning is shown once per client, then logged at debug. */
+  private warnedOversizeLearn = false;
   /** Warn about the learn cap once per pause, independent of the pause state. */
   private learnCapWarnedUntil = 0;
   /** Valid, normalized scraper name (option, else env var); undefined = default memory. */
@@ -193,11 +202,38 @@ export class FetchBrainClient {
     );
   }
 
+  /** True when recalls must not reach the API right now (crawl continues without). */
+  private recallBlocked(): boolean {
+    return this.keyRejected || Date.now() < this.recallPausedUntil || this.circuitBreaker.isOpen();
+  }
+
+  /**
+   * React to a 4xx the API returned. These are not outages (they don't open the
+   * shared breaker), but two of them mean the next calls would fail the same way:
+   * 401 (key invalid or revoked) stops all calls for this client, and a 429 on
+   * recall pauses recalls for the server's Retry-After.
+   */
+  private noteRefusal(error: unknown, endpoint: "recall" | "learn"): void {
+    if (!(error instanceof ApiError)) return;
+    if (error.status === 401) {
+      if (!this.keyRejected) {
+        this.keyRejected = true;
+        this.logger.warn(
+          "FetchBrain API key was rejected (401: invalid or revoked). FetchBrain is off for this run; the crawl continues without it.",
+        );
+      }
+    } else if (error.status === 429 && endpoint === "recall") {
+      const waitMs = Math.min(Math.max(error.retryAfterSec ?? 30, 1), 300) * 1000;
+      this.recallPausedUntil = Math.max(this.recallPausedUntil, Date.now() + waitMs);
+      this.logger.debug(`Recall rate-limited; pausing recalls for ${waitMs / 1000}s`);
+    }
+  }
+
   /**
    * Recall if FetchBrain "knows" a request
    */
   async recall(request: RawRequest): Promise<RecallResult> {
-    if (this.circuitBreaker.isOpen()) {
+    if (this.recallBlocked()) {
       return { known: false, fallback: true };
     }
     try {
@@ -210,7 +246,7 @@ export class FetchBrainClient {
 
   /**
    * Recall multiple requests at once — returns ordered array matching input order.
-   * Chunks to the API's 100-item cap and runs chunks with bounded concurrency; a
+   * Chunks to MAX_BULK_ITEMS (under the API's 100-item cap) and runs chunks with bounded concurrency; a
    * failed chunk degrades to fallback results for its own items only.
    */
   async recallBulk(requests: RawRequest[]): Promise<RecallResult[]> {
@@ -224,7 +260,7 @@ export class FetchBrainClient {
       while (next < chunks.length) {
         const idx = next++;
         const chunk = chunks[idx];
-        if (this.circuitBreaker.isOpen()) {
+        if (this.recallBlocked()) {
           chunkResults[idx] = chunk.map(() => ({ known: false, fallback: true }));
           continue;
         }
@@ -250,11 +286,26 @@ export class FetchBrainClient {
     if (!this.config.learning) {
       return { status: "rejected", learned: 0 };
     }
-    if (Date.now() < this.learnPausedUntil || this.circuitBreaker.isOpen()) {
+    if (this.keyRejected || Date.now() < this.learnPausedUntil || this.circuitBreaker.isOpen()) {
       return { status: "rejected", learned: 0 };
     }
+    // Size is checked per page, before batching, so an oversized page is
+    // refused on its own (and reported as not learned) instead of being dropped
+    // silently inside a batch whose result says "success". The page's records
+    // are kept or refused together: learning only the ones that fit would later
+    // recall a listing with items missing and no sign that anything is.
+    const processed = this.extractForLearning(data);
+    if (JSON.stringify(processed).length > MAX_LEARN_DATA_BYTES) {
+      const message =
+        `A page's data is over the ${MAX_LEARN_DATA_BYTES / 1024}KB learn limit, so it was not learned ` +
+        "and will be fetched again on later runs. Use extractForLearning to keep only the fields you need.";
+      if (this.warnedOversizeLearn) this.logger.debug(message);
+      else this.logger.warn(message);
+      this.warnedOversizeLearn = true;
+      return { status: "rejected", learned: 0, errors: ["too_large"] };
+    }
     try {
-      return await this.learnBatcher.learn(request, data);
+      return await this.learnBatcher.learn(request, processed);
     } catch (error) {
       if (error instanceof ApiError && error.code === "LEARN_CAP_EXCEEDED") {
         return { status: "rejected", learned: 0 };
@@ -393,6 +444,7 @@ export class FetchBrainClient {
       return results;
     } catch (error) {
       if (isOutage(error)) this.circuitBreaker.recordFailure();
+      else this.noteRefusal(error, "recall");
       throw error;
     }
   }
@@ -410,21 +462,10 @@ export class FetchBrainClient {
   private async executeBatchLearn(
     entries: { request: RawRequest; data: LearnedData }[],
   ): Promise<LearnResponse> {
-    const processed = entries
-      .map((e) => ({
-        request: e.request,
-        data: this.extractForLearning(e.data),
-      }))
-      // The API rejects an entry over its size cap; drop it here so it can't
-      // cost the rest of the batch a round-trip and a 4xx.
-      .filter((e) => {
-        const ok = JSON.stringify(e.data).length <= MAX_LEARN_DATA_BYTES;
-        if (!ok) this.logger.debug(`Not learning an entry over ${MAX_LEARN_DATA_BYTES} bytes`);
-        return ok;
-      });
-    if (processed.length === 0) return { status: "rejected", learned: 0 };
+    // Entries arrive already extracted and size-checked by learn().
+    if (entries.length === 0) return { status: "rejected", learned: 0 };
 
-    const request: LearnRequest = { entries: processed };
+    const request: LearnRequest = { entries };
 
     const platformBuildId = getPlatformBuildId();
     if (this.config.refreshOnRebuild && platformBuildId) {
@@ -449,6 +490,7 @@ export class FetchBrainClient {
       // also stop RECALLS, so the crawl would re-scrape pages FetchBrain
       // already knows. Back-pressure is handled with a learn-only pause instead.
       if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        this.noteRefusal(error, "learn");
         if (error.code === "LEARN_CAP_EXCEEDED") {
           const now = new Date();
           const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1);
@@ -588,6 +630,14 @@ export class FetchBrainClient {
   /**
    * Flush pending learn requests (call before shutdown)
    */
+  /**
+   * Wait (at most `timeoutMs`) until the background learn backlog has room.
+   * Lets the crawler slow to the API's pace instead of queueing without limit.
+   */
+  async waitForLearnRoom(timeoutMs: number): Promise<boolean> {
+    return this.learnBatcher.waitForRoom(timeoutMs);
+  }
+
   async flushLearnBatch(): Promise<void> {
     await this.learnBatcher.forceFlush();
   }

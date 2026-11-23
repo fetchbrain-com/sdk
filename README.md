@@ -435,8 +435,15 @@ unreachable.
 - A handler that throws (even after pushing) teaches nothing for that request,
   so a half-parsed page is never remembered; the retry learns it.
 - Learning happens in the background: `pushData` never waits for it, and
-  `crawler.run()` delivers every pending learn before it resolves.
-- A single record over 100KB is skipped (logged at debug), not sent.
+  `crawler.run()` delivers every pending learn before it resolves. If the API
+  falls behind, a handler waits briefly (at most 5s) for learns to catch up;
+  past that the page is not learned, and the crawl carries on.
+- A page's data is learned whole or not at all, up to **100KB** (after
+  `extractForLearning`). A page over the limit is not learned and is fetched
+  again on later runs; the SDK warns the first time. A listing of many records
+  can pass 100KB even when each record is small — use `extractForLearning` to
+  keep only the fields you need.
+- The run summary's `learned` counts only pages the API accepted.
 
 ## Learning with `Dataset.pushData`
 
