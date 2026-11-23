@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-23
+
 ### Changed (breaking)
 - For a page that pushed several records, `context.brain.data` and `RecalledEvent.data`
   (`onRecalled`) are now an **array** of those records; a single-record page is still a
@@ -36,8 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Background learns are capped at 3 requests in flight and a 500-entry backlog. When the API
   falls behind, request handlers wait up to 5s for room, so the crawl slows to the API's pace
   instead of growing memory without limit.
-- Pre-recalled pages waiting for their requests to run are capped at 256MB as well as 5000
-  pages, so large records can't exhaust a memory-limited actor. Pre-recall never waits for
+- Pre-recalled pages waiting for their requests to run are capped at 256MB (measured as JSON
+  length; in-memory size is larger) as well as 5000 pages. Lists of very large pages can still
+  use several hundred MB, so size memory-limited actors accordingly. Pre-recall never waits for
   room before the crawl starts, so large lists of big pages no longer stall `run()`.
 - A 401 (API key invalid or revoked) pauses FetchBrain calls for 60s at a time, with one
   warning, instead of every request paying a failing round-trip; the crawl continues.
