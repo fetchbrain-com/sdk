@@ -32,7 +32,8 @@ each is stored separately. When `uniqueKey` is omitted it defaults to the URL.
 
 <Note>
   Send `X-FB-Context: {"FETCHBRAIN_SCRAPER_ID":"<name>"}` to use a named
-  scraper's own memory. Without it, requests use your account's default memory.
+  scraper's own memory. Without a valid name, requests use your account's
+  default memory, or the actor's memory when `APIFY_ACTOR_ID` is sent.
   See [Naming a scraper](/docs/api-reference/overview#naming-a-scraper).
 </Note>
 

@@ -41,28 +41,34 @@ method (POST or GraphQL endpoints), set a distinct `uniqueKey` on each request.
 ## Naming a scraper
 
 Memory is private to your account. Inside an account, every request without a
-scraper name shares one default memory. To give a scraper its own memory, send
-its name in the `X-FB-Context` header, a JSON object of string values, on
-both `/v1/recall` and `/v1/learn`:
+scraper name (or Apify actor id) shares one default memory. To give a scraper
+its own memory, send its name in the `X-FB-Context` header, a JSON object of
+string values, on both `/v1/recall` and `/v1/learn`:
 
 ```http
 X-FB-Context: {"FETCHBRAIN_SCRAPER_ID":"shop-a"}
 ```
 
-- Names are trimmed and lowercased, then must match `^[a-z0-9][a-z0-9._-]{0,63}$`
-  (letters, digits, `.`, `_`, `-`; up to 64; not starting with `_`).
-- An invalid name is ignored, so the request uses the default memory.
+- Names are trimmed and lowercased, then must match `^[a-z0-9][a-z0-9._-]{0,63}$`:
+  lowercase letters, digits, `.`, `_` and `-`, up to 64 characters, starting
+  with a letter or digit.
+- An invalid name is ignored, as if it weren't sent. The response doesn't say
+  so: an invalid name just reads and writes the memory you'd get without it.
 - On Apify, `APIFY_ACTOR_ID` in the same header scopes memory per actor; a
   valid `FETCHBRAIN_SCRAPER_ID` takes precedence over it.
 - A new name starts empty. What you learned without a name stays in the
-  default memory.
+  default memory. One exception: a name equal to an Apify actor id on your
+  account (lowercased, with `/` replaced by `_`) shares that actor's memory.
 - The header is capped at 2048 characters. Anything larger, or anything that
   isn't a JSON object, is ignored.
+- On `/v1/ask`, a name (or `APIFY_ACTOR_ID`) narrows the answer to that
+  scraper's memory. Leave the header off to ask across all your scrapers.
 
 The Node SDK sends this header for you: see the
 [`scraper` option](/docs/sdk/enhance#param-scraper).
 
-```bash
+<CodeGroup>
+```bash cURL
 curl -X POST "https://api.fetchbrain.com/v1/recall" \
   -H "Authorization: Bearer $FETCHBRAIN_API_KEY" \
   -H "Content-Type: application/json" \
@@ -70,7 +76,7 @@ curl -X POST "https://api.fetchbrain.com/v1/recall" \
   -d '{"items":[{"ref":"0","request":{"url":"https://example.com/product/123"}}]}'
 ```
 
-```python
+```python Python
 import json, os, requests
 
 headers = {
@@ -83,6 +89,7 @@ requests.post(
     json={"items": [{"ref": "0", "request": {"url": "https://example.com/product/123"}}]},
 )
 ```
+</CodeGroup>
 
 ## Error Responses
 
