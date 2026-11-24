@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-24
+
+### Added
+- Change detection (opt-in, `changeDetection.enabled`): `alwaysRun` pages on known URLs also
+  learn, so FetchBrain can tell you which pages changed. `changeDetection.ignoreFields`
+  excludes fields (timestamps, counters) from the comparison. Uses learn quota.
+- The run summary shows changed / unchanged / first-seen counts and drift warnings (a field
+  that stopped being filled, went missing, or changed type).
+- End-of-run report: pages scraped, pages that pushed no data, and failed pages per label.
+  Sent once per `run()` with a short timeout; a failure never affects your crawl.
+
+### Fixed
+- A non-string request label no longer fails the page.
+
 ## [0.7.1] - 2026-11-24
 
 ### Fixed

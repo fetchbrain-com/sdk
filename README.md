@@ -261,6 +261,8 @@ interface FetchBrainConfig {
     successThreshold?: number; // Successes to close it again (default: 1)
   };
   telemetry?: TelemetryConfig; // Opt-in telemetry (default: { enabled: false })
+  changeDetection?: { enabled?: boolean; ignoreFields?: string[] }; // Relearn known alwaysRun pages and report changes (default: off)
+  reportRuns?: boolean; // Send the end-of-run report: run id, timestamps, counts per label (default: true)
   learnUrlField?: string; // Accepted but not currently applied
   debug?: boolean; // Enable debug logging (default: false)
 }
@@ -524,9 +526,72 @@ exception is [expired memory](#recall-at-enqueue-time-prerecall): a request
 that skipped its fetch at enqueue and whose remembered data is gone fails
 into your `failedRequestHandler` rather than disappearing silently.
 
+## Change detection & drift
+
+FetchBrain can tell you when the pages you scrape change, and when your own
+scraper quietly stops extracting something.
+
+**What is detected**
+
+- **Changed pages**: a page you re-scrape whose data differs from what the
+  brain last learned. Each run summary shows a `changed: N` count.
+- **Drift**: a field that used to be filled on most pages of a label and now
+  isn't (for example `price` going from 95% filled to 0%), a field that went
+  missing, or a field whose type changed. Each finding prints a warning at the
+  end of the run, such as `drift [DETAIL] price: filled 95% → 0%`. The same warning (label, field and kind) is shown once per process even if it recurs in a later `run()`; the email and dashboard still reflect it.
+- **Unhealthy runs**: a large share of a label's pages pushed no data or
+  failed, such as `40% of DETAIL pages pushed no data`.
+
+**Turn on change detection**
+
+Pages the brain already knows are normally recalled, not re-scraped. Change
+detection applies to known pages you choose to re-scrape with
+[`alwaysRun`](#choosing-which-handlers-run): with it on, their fresh data is
+learned again and compared with the previous version.
+
+```ts
+FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  alwaysRun: ["DETAIL"],
+  changeDetection: {
+    enabled: true,
+    ignoreFields: ["scrapedAt", "sessionId"], // fields that always differ; not compared
+  },
+});
+```
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `changeDetection.enabled` | `false` | Relearn known `alwaysRun` pages so changes can be detected |
+| `changeDetection.ignoreFields` | none | Field names to leave out of the comparison |
+
+**Cost note:** relearning a known `alwaysRun` page counts toward your learn
+usage, like any other learn. Pages recalled without running your handler are
+never relearned.
+
+**Run report**
+
+<a id="run-report"></a>
+
+When a run finishes, the SDK sends a small report containing exactly: the run
+id, start and end timestamps, totals for scraped, learned and recalled pages,
+per request label how many pages were scraped, came back empty or failed, and
+your build id only when `refreshOnRebuild` is on. It contains no URLs and no
+scraped data. A page counts as "pushed no data" when your handler pushed nothing
+through `context.pushData` or the SDK's `pushData` export (pages written
+straight to Crawlee's static `Dataset.pushData` are counted that way too), and
+retries count once per attempt. The report is sent with the same standard
+headers as every other call (see [What leaves your process](#what-leaves-your-process)). It is what powers the unhealthy-run warnings above. It is not
+[telemetry](#telemetry-opt-in) and is on by default; set `reportRuns: false` to
+turn it off. It is bounded to a few seconds at the end of a run and can never
+fail your crawl.
+
+You can browse what changed in the FetchBrain dashboard, or fetch it from
+`GET /v1/changes`.
+
 ## What leaves your process
 
-Every API call (recall, learn, ask, stats, telemetry) sends these headers:
+Every API call (recall, learn, ask, stats, telemetry, run report) sends these headers:
 
 | Header | Value |
 | --- | --- |
@@ -556,7 +621,7 @@ query string), method, `uniqueKey`, label, string POST body, your
 `Authorization`, `Cookie` and `Set-Cookie`. Recall also sends your `memory`
 depth; learn also sends the record you pushed (after `extractForLearning`).
 
-With `refreshOnRebuild`, recall, learn and `ask()` also send a build ID: the
+With `refreshOnRebuild`, recall, learn, the run report and `ask()` also send a build ID: the
 value of the first environment variable whose name ends in `BUILD_ID`. This
 value is sent as-is — it does **not** go through the name, credential or
 length filters `X-FB-Context` uses.
@@ -567,7 +632,10 @@ forwarded as-is — keep secrets out of them on requests FetchBrain handles,
 or route those requests through `skipLabels`, which sends nothing for them.
 
 `ask()` sends your question and options. Telemetry sends nothing unless you
-[opt in](#telemetry-opt-in).
+[opt in](#telemetry-opt-in). At the end of a run the SDK also sends a small
+[run report](#run-report): run id, start/end timestamps, scraped/learned/recalled
+counts, per-label page counts, and a build id only with `refreshOnRebuild`
+(`reportRuns: false` turns it off).
 
 ## Telemetry (opt-in)
 

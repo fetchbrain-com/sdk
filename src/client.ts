@@ -14,6 +14,10 @@ import type {
   RawRequest,
   BatchConfig,
   LearnedData,
+  ChangeStats,
+  DriftItem,
+  RunFlag,
+  RunReport,
 } from "./types";
 import { CircuitBreaker } from "./circuit-breaker";
 import { RequestBatcher, LearnBatcher } from "./batch";
@@ -26,6 +30,7 @@ const DEFAULT_BASE_URL = "https://api.fetchbrain.com";
 // timed out every 50-recall batch and opened the breaker. 1500ms leaves headroom;
 // a degraded API still trips the breaker after a few timeouts.
 const DEFAULT_TIMEOUT = 1500;
+const REPORT_RUN_TIMEOUT = 3000; // End-of-run report: waits at most this long, never blocks shutdown
 const DEFAULT_LEARN_TIMEOUT = 5000; // Longer timeout for batch learn operations
 const BULK_RECALL_TIMEOUT = 3000; // Enqueue-time pre-recall is off the per-request hot path: favor reliability over fast-fail
 // API's MAX_ITEMS_PER_REQUEST is 100, but API versions before the high-volume fix
@@ -118,16 +123,26 @@ export function clearScrapeContext(): void {
  * - Circuit breaker for graceful degradation
  * - Automatic retries and timeouts
  */
+/** Upper bound on drift findings kept per process (the API sends few; this guards a bad response). */
+const MAX_DRIFT_ITEMS = 100;
+const DRIFT_KINDS = new Set(["fill_drop", "missing", "type_changed"]);
+/** Strip control, bidi-override and zero-width characters (incl. ANSI escapes) and clamp length — drift text is printed to the console. */
+export const clipText = (v: unknown, max = 128): string =>
+  String(v)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, " ")
+    .slice(0, max);
+
 export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper" | "changeDetection"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper" | "changeDetection"
     >;
   private circuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
@@ -152,6 +167,8 @@ export class FetchBrainClient {
   private learnCapWarnedUntil = 0;
   /** Valid, normalized scraper name (option, else env var); undefined = default memory. */
   private scraperName: string | undefined;
+  /** Change counts, accumulated once per learn HTTP batch (never per learn() promise). */
+  private changeStats: ChangeStats = { changed: 0, unchanged: 0, firstSeen: 0, drift: [] };
 
   constructor(config: FetchBrainConfig) {
     this.config = {
@@ -172,6 +189,8 @@ export class FetchBrainClient {
       preRecall: config.preRecall, // enhance-only; stored so getConfig() round-trips
       onRecalled: config.onRecalled, // enhance-only; stored so getConfig() round-trips
       scraper: config.scraper,
+      changeDetection: config.changeDetection,
+      reportRuns: config.reportRuns ?? true,
     };
 
     this.logger = createLogger(this.config.debug ? "debug" : "info", true);
@@ -473,6 +492,9 @@ export class FetchBrainClient {
 
     const request: LearnRequest = { entries };
 
+    const ignore = this.config.changeDetection?.ignoreFields;
+    if (ignore && ignore.length > 0) request.ignore = ignore;
+
     const platformBuildId = getPlatformBuildId();
     if (this.config.refreshOnRebuild && platformBuildId) {
       request.build = platformBuildId;
@@ -489,6 +511,11 @@ export class FetchBrainClient {
       );
 
       this.circuitBreaker.recordSuccess();
+      try {
+        this.accumulateChanges(response);
+      } catch (statsErr) {
+        this.logger.debug("Change stats skipped:", statsErr);
+      }
       return response;
     } catch (error) {
       // A 4xx is the learn being refused (cap reached, rate-limited, invalid
@@ -517,6 +544,63 @@ export class FetchBrainClient {
       }
       this.circuitBreaker.recordFailure();
       throw error;
+    }
+  }
+
+  /** Fold one batch response into the change totals (called once per HTTP batch). */
+  private accumulateChanges(response: LearnResponse): void {
+    const stats = this.changeStats;
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    stats.changed += num(response.changed);
+    stats.unchanged += num(response.unchanged);
+    stats.firstSeen += num(response.firstSeen);
+    const drift = Array.isArray(response.drift) ? response.drift : [];
+    for (const item of drift) {
+      if (
+        !item ||
+        typeof item !== "object" ||
+        typeof item.label !== "string" ||
+        typeof item.field !== "string" ||
+        !DRIFT_KINDS.has(item.kind)
+      ) {
+        continue;
+      }
+      if (stats.drift.length >= MAX_DRIFT_ITEMS) break;
+      const clean: DriftItem = {
+        ...item,
+        label: clipText(item.label),
+        field: clipText(item.field),
+      };
+      const exists = stats.drift.some(
+        (d) => d.label === clean.label && d.field === clean.field && d.kind === clean.kind,
+      );
+      if (!exists) stats.drift.push(clean);
+    }
+  }
+
+  /** Change counts so far (a copy). */
+  getChangeStats(): ChangeStats {
+    return { ...this.changeStats, drift: [...this.changeStats.drift] };
+  }
+
+  /**
+   * Send the end-of-run report. Counts and labels only. Never throws: on
+   * failure or timeout it returns no flags.
+   */
+  async reportRun(report: RunReport, timeoutMs = REPORT_RUN_TIMEOUT): Promise<RunFlag[]> {
+    if (this.config.reportRuns === false || this.recallBlocked()) return [];
+    try {
+      const response = await this.makeRequest<{ flags?: RunFlag[] }>(
+        "/v1/runs",
+        { method: "POST", body: JSON.stringify(report) },
+        Math.min(timeoutMs, REPORT_RUN_TIMEOUT),
+      );
+      this.circuitBreaker.recordSuccess();
+      return Array.isArray(response?.flags) ? response.flags : [];
+    } catch (error) {
+      if (isOutage(error)) this.circuitBreaker.recordFailure();
+      this.logger.debug("Run report failed:", error);
+      return [];
     }
   }
 

@@ -193,6 +193,17 @@ app.post("/v1/learn", (req, res) => {
 });
 
 /**
+ * POST /v1/runs - End-of-run report (counts only); the mock never flags.
+ */
+app.post("/v1/runs", (req, res) => {
+  const body = req.body as { runId?: unknown };
+  if (typeof body?.runId !== "string" || body.runId.length === 0) {
+    return res.status(400).json({ error: "runId is required" });
+  }
+  res.status(201).json({ status: "recorded", flags: [] });
+});
+
+/**
  * GET /v1/stats - Usage statistics
  */
 app.get("/v1/stats", (req, res) => {
