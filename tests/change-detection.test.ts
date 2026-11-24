@@ -6,6 +6,7 @@ const m = vi.hoisted(() => ({
   learn: vi.fn(),
   getChangeStats: vi.fn(),
   reportRun: vi.fn(),
+  recallBulk: vi.fn(),
 }));
 
 vi.mock("../src/client", async (orig) => {
@@ -20,6 +21,7 @@ vi.mock("../src/client", async (orig) => {
       sendTelemetry: vi.fn(),
       getChangeStats: m.getChangeStats,
       reportRun: m.reportRun,
+      recallBulk: m.recallBulk,
       getConfig: () => ({}),
     })),
   };
@@ -353,6 +355,207 @@ describe("run tracking and summary", () => {
     // Junk stats are skipped (debug only); nothing throws into the finished crawl.
     warn.mockRestore();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("run tracking: requests skipped and late recalls", () => {
+  type QReq = { url: string; label?: string; skipNavigation?: boolean; userData?: Record<string, unknown> };
+  /**
+   * A crawler with a request queue: run(reqs) enqueues through this.addRequests (the
+   * FetchBrain wrapper once enhanced), then handles each request, retrying a failed
+   * one up to maxRetries times with the SAME request object (as Crawlee does).
+   */
+  function queueCrawler(
+    handler: (ctx: any) => Promise<void>,
+    opts: { retryOnBlocked?: boolean; maxRetries?: number; pushData?: () => any } = {},
+  ) {
+    const c: any = {
+      requestHandler: handler,
+      retryOnBlocked: opts.retryOnBlocked,
+      queue: [] as QReq[],
+      constructor: { name: "MockCrawler" },
+      async addRequests(reqs: Array<string | QReq>) {
+        for (const r of reqs) this.queue.push(typeof r === "string" ? { url: r } : r);
+      },
+      async run(reqs?: Array<string | QReq>) {
+        if (reqs) await this.addRequests(reqs);
+        while (this.queue.length) {
+          const r = this.queue.shift() as QReq;
+          const request = { ...r, userData: { ...(r.userData ?? {}) } };
+          for (let attempt = 0; attempt <= (opts.maxRetries ?? 0); attempt++) {
+            try {
+              await this.requestHandler({ request, pushData: opts.pushData ?? vi.fn() });
+              break;
+            } catch {
+              // failed attempt — retry with the same request object
+            }
+          }
+        }
+      },
+    };
+    return c;
+  }
+  const report = (i = 0) => m.reportRun.mock.calls[i][0];
+  const knownBulk = () =>
+    m.recallBulk.mockImplementation(async (rs: unknown[]) => rs.map(() => ({ known: true, data: { title: "old" } })));
+  const TIP = "were recalled after they were fetched";
+
+  it("1. a pre-recalled known page counts as a request skipped", async () => {
+    knownBulk();
+    const e = FetchBrain.enhance(queueCrawler(async () => {}), base);
+    await e.run(["https://a.test/1"]);
+    expect(m.recall).not.toHaveBeenCalled();
+    expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 1, lateRecalls: 0, scraped: 0 });
+  });
+
+  it("2. a handler-time recall counts as a late recall", async () => {
+    m.recall.mockResolvedValue(KNOWN);
+    const e = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    e.script = () => e.requestHandler(ctx("https://a.test/1"));
+    await e.run([]);
+    expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 0, lateRecalls: 1 });
+  });
+
+  it("3. a known page the user marked skipNavigation counts as a late recall", async () => {
+    knownBulk();
+    m.recall.mockResolvedValue(KNOWN);
+    const e = FetchBrain.enhance(queueCrawler(async () => {}), base);
+    await e.run([{ url: "https://a.test/1", skipNavigation: true }]);
+    expect(m.recallBulk).not.toHaveBeenCalled();
+    expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 0, lateRecalls: 1 });
+  });
+
+  it("4. an alwaysRun page counts as recalled + scraped only", async () => {
+    knownBulk();
+    const e = FetchBrain.enhance(queueCrawler(async () => {}), { ...base, alwaysRun: ["D"] });
+    await e.run([{ url: "https://a.test/1", label: "D" }]);
+    expect(report()).toMatchObject({ recalled: 1, scraped: 1, requestsSkipped: 0, lateRecalls: 0 });
+  });
+
+  it("5. retryOnBlocked pages count as late recalls and log no tip", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    knownBulk();
+    const e = FetchBrain.enhance(queueCrawler(async () => {}, { retryOnBlocked: true }), base);
+    await e.run(["https://a.test/1"]);
+    expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 0, lateRecalls: 1 });
+    expect(info.mock.calls.map((c) => c.join(" ")).join("\n")).not.toContain(TIP);
+    info.mockRestore();
+  });
+
+  it("6. pushData rejects once, then the retry succeeds: counted once", async () => {
+    knownBulk();
+    const push = vi.fn().mockRejectedValueOnce(new Error("dataset")).mockResolvedValue(undefined);
+    const e = FetchBrain.enhance(queueCrawler(async () => {}, { maxRetries: 2, pushData: push }), base);
+    await e.run(["https://a.test/1"]);
+    expect(push).toHaveBeenCalledTimes(2);
+    expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 1, lateRecalls: 0 });
+  });
+
+  it("6b. the same request handled successfully twice is counted once", async () => {
+    m.recall.mockResolvedValue(KNOWN);
+    const e = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    const c = ctx("https://a.test/1");
+    e.script = async () => {
+      await e.requestHandler(c);
+      await e.requestHandler(c);
+    };
+    await e.run([]);
+    expect(c.pushData).toHaveBeenCalledTimes(2);
+    expect(report()).toMatchObject({ recalled: 1, lateRecalls: 1 });
+    expect(c.request).toHaveProperty("userData.__fetchBrainCounted", true);
+  });
+
+  it("7. pushData always rejects: not counted", async () => {
+    knownBulk();
+    const push = vi.fn().mockRejectedValue(new Error("dataset"));
+    const e = FetchBrain.enhance(queueCrawler(async () => {}, { maxRetries: 2, pushData: push }), base);
+    await e.run(["https://a.test/1"]);
+    expect(push).toHaveBeenCalledTimes(3);
+    expect(report()).toMatchObject({ recalled: 0, requestsSkipped: 0, lateRecalls: 0 });
+  });
+
+  it("8. a skipLabels page is reported as bypassed", async () => {
+    const e = FetchBrain.enhance(queueCrawler(async () => {}), { ...base, skipLabels: ["LIST"] });
+    await e.run([{ url: "https://a.test/list", label: "LIST" }]);
+    expect(report()).toMatchObject({ bypassed: 1, recalled: 0, scraped: 0 });
+  });
+
+  it("9. two run() calls under one platform run id get distinct runIds", async () => {
+    process.env.APIFY_ACTOR_RUN_ID = "rr_two_calls";
+    const e = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    await e.run([]);
+    await e.run([]);
+    expect(m.reportRun.mock.calls.map((c) => c[0].runId)).toEqual(["rr_two_calls", "rr_two_calls-2"]);
+  });
+
+  it("10. two enhanced crawlers in one process get distinct runIds", async () => {
+    process.env.APIFY_ACTOR_RUN_ID = "rr_two_crawlers";
+    const a = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    const b = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    await a.run([]);
+    await b.run([]);
+    expect(m.reportRun.mock.calls.map((c) => c[0].runId)).toEqual(["rr_two_crawlers", "rr_two_crawlers-2"]);
+  });
+
+  it("10b. a long platform run id keeps its suffix within the length cap", async () => {
+    process.env.APIFY_ACTOR_RUN_ID = "x".repeat(200);
+    const e = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    await e.run([]);
+    await e.run([]);
+    const [first, second] = m.reportRun.mock.calls.map((c) => c[0].runId as string);
+    expect(first.length).toBeLessThanOrEqual(128);
+    expect(second.length).toBeLessThanOrEqual(128);
+    expect(second.endsWith("-2")).toBe(true);
+    expect(second).not.toBe(first);
+  });
+
+  it("11. the summary on a second run() shows per-run deltas and requests skipped", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    knownBulk();
+    const e = FetchBrain.enhance(queueCrawler(async () => {}), base);
+    await e.run(["https://a.test/1", "https://a.test/2"]);
+    info.mockClear();
+    m.recallBulk.mockImplementation(async (rs: unknown[]) =>
+      rs.map((_, i) => (i === 0 ? { known: true, data: { title: "old" } } : { known: false })),
+    );
+    await e.run(["https://a.test/3", "https://a.test/4"]);
+    const line = info.mock.calls.map((c) => c.join(" ")).find((l) => l.includes("Finished!")) ?? "";
+    expect(line).toContain("recalled: 1/2 (50.0%)");
+    expect(line).toContain("requests skipped: 1");
+    expect(line).toContain("scraped: 1");
+    expect(report(1)).toMatchObject({ recalled: 1, requestsSkipped: 1, lateRecalls: 0, scraped: 1 });
+    info.mockRestore();
+  });
+
+  it("12. logs the tip once when pages were recalled after their fetch", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    m.recall.mockResolvedValue(KNOWN);
+    const e = FetchBrain.enhance(queueCrawler(async () => {}), base);
+    e.queue.push({ url: "https://a.test/1" }, { url: "https://a.test/2" }); // not via addRequests
+    await e.run();
+    const tips = info.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes(TIP));
+    expect(tips).toHaveLength(1);
+    expect(tips[0]).toContain(
+      "2 pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch.",
+    );
+    expect(report()).toMatchObject({ lateRecalls: 2, requestsSkipped: 0 });
+
+    // No tip with preRecall off.
+    info.mockClear();
+    const off = FetchBrain.enhance(queueCrawler(async () => {}), { ...base, preRecall: false });
+    off.queue.push({ url: "https://a.test/3" });
+    await off.run();
+    expect(info.mock.calls.map((c) => c.join(" ")).join("\n")).not.toContain(TIP);
+    info.mockRestore();
+  });
+
+  it("strips the counted marker from the learned identity", async () => {
+    m.recall.mockResolvedValue({ known: false });
+    const e = FetchBrain.enhance(crawlerWith(async (c) => c.pushData({ x: 1 })), base);
+    const c = ctx("https://a.test/1") as any;
+    c.request.userData = { keep: 1, __fetchBrainCounted: true };
+    await e.requestHandler(c);
+    expect(m.learn.mock.calls[0][0].userData).toEqual({ keep: 1 });
   });
 });
 
