@@ -32,6 +32,21 @@ const REPORT_LABEL_MAX_CHARS = 64;
 const RUN_ID_MAX_CHARS = 128;
 const NO_LABEL = "_nolabel";
 
+// Run ids already issued per platform run: one Apify run can host several
+// crawlers or run() calls, and each must report under its own id (the API keeps
+// one report per id, so reusing the platform id made later runs overwrite earlier ones).
+const platformRunSeq = new Map<string, number>();
+
+/** Id for one run() report: the platform run id (suffixed -2, -3… after the first), else a UUID. */
+function nextRunId(): string {
+  const platform = process.env.APIFY_ACTOR_RUN_ID;
+  if (!platform) return randomUUID();
+  const id = platform.slice(0, RUN_ID_MAX_CHARS - 8);
+  const n = (platformRunSeq.get(id) ?? 0) + 1;
+  platformRunSeq.set(id, n);
+  return n === 1 ? id : `${id}-${n}`;
+}
+
 /**
  * A request label as text. Crawlee types it as a string but stores whatever is in
  * `userData.label`, so a JS crawler can hand us a number. Numbers/booleans become
@@ -737,7 +752,7 @@ export class FetchBrain {
         labelStats.clear();
         const runBase = { scraped: runStats.scraped, learned: runStats.learned, recalled: runStats.recalled };
         const changeBase = safeChangeStats(client);
-        const runId = (process.env.APIFY_ACTOR_RUN_ID || randomUUID()).slice(0, RUN_ID_MAX_CHARS);
+        const runId = nextRunId();
         try {
           const result = await originalRun(...args);
           return result;

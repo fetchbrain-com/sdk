@@ -279,6 +279,16 @@ describe("run tracking and summary", () => {
     expect(m.reportRun.mock.calls[2][0].runId).toBe("run_123");
   });
 
+  it("gives each run() and each crawler in one Apify run its own id", async () => {
+    process.env.APIFY_ACTOR_RUN_ID = "apify_multi";
+    const a = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    const b = FetchBrain.enhance(crawlerWith(async () => {}), base);
+    await a.run([]);
+    await b.run([]);
+    await a.run([]);
+    expect(m.reportRun.mock.calls.map((c) => c[0].runId)).toEqual(["apify_multi", "apify_multi-2", "apify_multi-3"]);
+  });
+
   it("skips the report when reportRuns is false", async () => {
     const e = FetchBrain.enhance(crawlerWith(async () => {}), { ...base, reportRuns: false });
     await e.run([]);
