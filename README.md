@@ -96,7 +96,7 @@ That's it. Your handler only runs when there's something new to learn.
 - **Auto-learning** — every successful scrape teaches the brain, free
 - **Never breaks your crawl** — the circuit breaker degrades gracefully; an outage costs you optimization, not your crawl (one deliberate exception: [expired memory](#recall-at-enqueue-time-prerecall))
 - **Built for scale** — request batching and deduping for high-concurrency crawlers
-- **Crawlee-native** — CheerioCrawler, PlaywrightCrawler, and friends
+- **Crawlee-native** — CheerioCrawler, PlaywrightCrawler, and friends (browser crawlers — Playwright, Puppeteer — from 0.7.1; earlier versions did not apply FetchBrain to them. `AdaptivePlaywrightCrawler` is not supported yet)
 - **Transparent** — see exactly [what leaves your process](#what-leaves-your-process). Telemetry is **opt-in** and pseudonymous ([details](#telemetry-opt-in))
 - **TypeScript-first** — full types, ESM + CJS; an API key is the only required option
 
@@ -701,6 +701,10 @@ Nothing. Learning is never billed — you pay only for known recalls.
 **What if the data changed since the brain learned it?**
 That's what memory depth is for: pick `fresh` (1h) for volatile data, or
 set `refreshOnRebuild` to re-learn whenever you ship a new scraper build.
+
+**Can I call `enhance()` twice on the same crawler?**
+Don't — each call wraps the crawler again, so recalls and learns run twice.
+Enhance a crawler once, right after you create it.
 
 ## Contributing
 

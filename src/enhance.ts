@@ -56,6 +56,22 @@ export function isIterableInputRejection(err: unknown): boolean {
 }
 
 /**
+ * Which property holds the request handler the crawler actually invokes.
+ * Browser crawlers call `userProvidedRequestHandler` (their `requestHandler` is a
+ * never-called shim); HTTP crawlers call `requestHandler`. `userDefinedRequestHandler`
+ * is kept as a last-resort fallback for unusual crawler shapes.
+ */
+function resolveHandlerKey(
+  crawler: object,
+): "userProvidedRequestHandler" | "requestHandler" | "userDefinedRequestHandler" | null {
+  const c = crawler as Record<string, unknown>;
+  for (const key of ["userProvidedRequestHandler", "requestHandler", "userDefinedRequestHandler"] as const) {
+    if (typeof c[key] === "function") return key;
+  }
+  return null;
+}
+
+/**
  * Snapshot the raw request the SDK forwards (credentials + SDK userData removed).
  * Note: non-SDK `userData` keys are forwarded as-is — credentials belong in headers
  * (which ARE stripped), not userData.
@@ -254,10 +270,25 @@ export class FetchBrain {
     // Background learns whose result has not been counted into runStats yet.
     const pendingLearns = new Set<Promise<void>>();
 
-    // Get original request handler
-    const originalHandler =
-      (crawler as any).requestHandler ||
-      (crawler as any).userDefinedRequestHandler;
+    // Get the handler the crawler actually calls. Browser crawlers (Playwright,
+    // Puppeteer) keep the user's handler in `userProvidedRequestHandler` and call
+    // it from their own `_runRequestHandler`; their `requestHandler` is an
+    // internal shim that is never invoked, so wrapping it would be a no-op.
+    // AdaptivePlaywrightCrawler (experimental in Crawlee) routes requests through
+    // `adaptiveRequestHandler` and a proxy over the browser path, and needs a real
+    // response there — skipping navigation would crash it. Not supported yet:
+    // leave it untouched rather than wrap a handler it never calls.
+    if ("adaptiveRequestHandler" in (crawler as object)) {
+      logger.warn(
+        "AdaptivePlaywrightCrawler is not supported yet — FetchBrain left this crawler unmodified",
+      );
+      return Object.assign(crawler as object, { fetchBrain: client }) as T & {
+        fetchBrain: FetchBrainClient;
+      };
+    }
+
+    const handlerKey = resolveHandlerKey(crawler as object);
+    const originalHandler = handlerKey ? (crawler as any)[handlerKey] : undefined;
 
     if (!originalHandler) {
       logger.warn("No request handler found on crawler, returning unmodified");
@@ -637,12 +668,8 @@ export class FetchBrain {
 
     // Replace the handler
     const crawlerAny = crawler as any;
-    if ("requestHandler" in crawlerAny) {
-      crawlerAny.requestHandler = wrappedHandler;
-    }
-    if ("userDefinedRequestHandler" in crawlerAny) {
-      crawlerAny.userDefinedRequestHandler = wrappedHandler;
-    }
+    crawlerAny[handlerKey!] = wrappedHandler;
+    logger.debug(`Wrapped ${handlerKey}`);
 
     // Wrap the run method to flush telemetry and print summary when crawl completes
     if (typeof crawlerAny.run === "function") {

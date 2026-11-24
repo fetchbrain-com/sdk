@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-24
+
+### Fixed
+- Browser crawlers (PlaywrightCrawler, PuppeteerCrawler) are now enhanced. Crawlee calls
+  their handler through `userProvidedRequestHandler`, which earlier versions did not wrap:
+  FetchBrain never recalled or learned for them, and a URL already known (e.g. learned by an
+  HTTP crawler) could have its navigation skipped while your handler still ran on a blank
+  page. Upgrade if you use a browser crawler.
+- `AdaptivePlaywrightCrawler` (experimental in Crawlee) is not supported yet: `enhance()` now
+  logs a warning and leaves it unmodified instead of wrapping a handler it never calls.
+
 ## [0.7.0] - 2026-11-23
 
 ### Changed (breaking)
