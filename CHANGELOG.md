@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-24
+
+### Added
+- Change detection (opt-in, `changeDetection.enabled`): `alwaysRun` pages on known URLs also
+  learn, so FetchBrain can tell you which pages changed. `changeDetection.ignoreFields`
+  excludes fields (timestamps, counters) from the comparison. Uses learn quota.
+- The run summary shows changed / unchanged / first-seen counts and drift warnings (a field
+  that stopped being filled, went missing, or changed type).
+- End-of-run report: pages scraped, pages that pushed no data, and failed pages per label.
+  Sent once per `run()` with a short timeout; a failure never affects your crawl.
+
+### Fixed
+- A non-string request label no longer fails the page.
+
+## [0.7.1] - 2026-11-24
+
+### Fixed
+- Browser crawlers (PlaywrightCrawler, PuppeteerCrawler) are now enhanced. Crawlee calls
+  their handler through `userProvidedRequestHandler`, which earlier versions did not wrap:
+  FetchBrain never recalled or learned for them, and a URL already known (e.g. learned by an
+  HTTP crawler) could have its navigation skipped while your handler still ran on a blank
+  page. Upgrade if you use a browser crawler.
+- `AdaptivePlaywrightCrawler` (experimental in Crawlee) is not supported yet: `enhance()` now
+  logs a warning and leaves it unmodified instead of wrapping a handler it never calls.
+
 ## [0.7.0] - 2026-11-23
 
 ### Changed (breaking)
