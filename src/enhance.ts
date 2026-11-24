@@ -32,8 +32,19 @@ const REPORT_LABEL_MAX_CHARS = 64;
 const RUN_ID_MAX_CHARS = 128;
 const NO_LABEL = "_nolabel";
 
-function reportLabel(label?: string): string {
-  const trimmed = (label ?? "").trim().slice(0, REPORT_LABEL_MAX_CHARS);
+/**
+ * A request label as text. Crawlee types it as a string but stores whatever is in
+ * `userData.label`, so a JS crawler can hand us a number. Numbers/booleans become
+ * their string form; anything else counts as unlabeled. Never throws.
+ */
+function labelText(label: unknown): string | undefined {
+  if (typeof label === "string") return label;
+  if (typeof label === "number" || typeof label === "boolean") return String(label);
+  return undefined;
+}
+
+function reportLabel(label?: unknown): string {
+  const trimmed = (labelText(label) ?? "").trim().slice(0, REPORT_LABEL_MAX_CHARS);
   return trimmed || NO_LABEL;
 }
 
@@ -99,7 +110,7 @@ export function isIterableInputRejection(err: unknown): boolean {
 function buildRawRequest(request: Record<string, unknown>): RawRequest {
   const r = request as {
     url: string; method?: string; uniqueKey?: string; payload?: unknown;
-    headers?: Record<string, unknown>; userData?: Record<string, unknown>; label?: string;
+    headers?: Record<string, unknown>; userData?: Record<string, unknown>; label?: unknown;
   };
   let headers: Record<string, string> | undefined;
   if (r.headers) {
@@ -118,7 +129,7 @@ function buildRawRequest(request: Record<string, unknown>): RawRequest {
   let body: string | undefined;
   if (typeof r.payload === "string") body = r.payload;
   // binary payloads are omitted (identity is url+method+uniqueKey; body is metadata only)
-  return { url: r.url, method: r.method, uniqueKey: r.uniqueKey, body, headers, userData, label: r.label };
+  return { url: r.url, method: r.method, uniqueKey: r.uniqueKey, body, headers, userData, label: labelText(r.label) };
 }
 
 /** Warn once when a body-bearing request can't be differentiated by its key. */
@@ -289,7 +300,7 @@ export class FetchBrain {
     };
     // Per-label page counts for the end-of-run report.
     const labelStats = new Map<string, { scraped: number; empty: number; failed: number }>();
-    const labelCounts = (label?: string) => {
+    const labelCounts = (label?: unknown) => {
       const key = reportLabel(label);
       let counts = labelStats.get(key);
       if (!counts && labelStats.size < REPORT_MAX_LABELS) {

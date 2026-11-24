@@ -366,3 +366,26 @@ describe("drift hardening", () => {
     expect(stored.some((d) => d.kind === ("evil" as never))).toBe(false);
   });
 });
+
+describe("non-string labels", () => {
+  // Crawlee types request.label as a string but returns whatever userData.label
+  // holds, so a JS crawler can pass a number. It must never fail the page.
+  it("runs the handler, learns and reports a numeric label as text", async () => {
+    m.recall.mockResolvedValue({ known: false });
+    const handler = vi.fn(async (c: any) => {
+      await c.pushData({ title: "t" });
+    });
+    const crawler = crawlerWith(handler);
+    const e = FetchBrain.enhance(crawler, { ...base });
+    crawler.script = async () => {
+      await e.requestHandler({ request: { url: "https://a.test/n", label: 7, userData: { label: 7 } }, pushData: vi.fn() });
+      await e.requestHandler({ request: { url: "https://a.test/o", label: { x: 1 } }, pushData: vi.fn() });
+    };
+    await e.run();
+    expect(handler).toHaveBeenCalledTimes(2);
+    const learnedLabels = m.learn.mock.calls.map((c: any[]) => c[0]?.label);
+    expect(learnedLabels).toEqual(["7", undefined]);
+    const report = m.reportRun.mock.calls[0][0];
+    expect(Object.keys(report.labels).sort()).toEqual(["7", "_nolabel"]);
+  });
+});
