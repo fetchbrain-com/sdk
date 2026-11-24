@@ -62,6 +62,12 @@ export type {
   BatchConfig,
   Logger,
   LogLevel,
+  // Change detection types
+  ChangeDetectionConfig,
+  ChangeStats,
+  DriftItem,
+  RunFlag,
+  RunReport,
   // Telemetry types
   TelemetryConfig,
   TelemetryData,

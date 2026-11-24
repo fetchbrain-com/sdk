@@ -7,6 +7,58 @@
 /** How far back the brain recalls: fresh=1h, recent=24h, standard=7d, deep=30d */
 export type MemoryDepth = "fresh" | "recent" | "standard" | "deep";
 
+/** Options for change detection. */
+export interface ChangeDetectionConfig {
+  /** Relearn known `alwaysRun` pages and report what changed (default: false). */
+  enabled?: boolean;
+  /** Field names to ignore when comparing versions (e.g. "scrapedAt"). */
+  ignoreFields?: string[];
+}
+
+/** A scraper-drift finding: a field whose fill rate or type shifted. */
+export interface DriftItem {
+  label: string;
+  field: string;
+  kind: "fill_drop" | "missing" | "type_changed";
+  /** Fill rate 0..1 (or a type name for type_changed). */
+  from: number | string;
+  to: number | string;
+}
+
+/** A run-level flag returned by the run report. */
+export interface RunFlag {
+  label: string;
+  kind: "empty_pages" | "failed_pages";
+  rate: number;
+}
+
+/** Per-label page counts in a run report. */
+export interface RunLabelCounts {
+  scraped: number;
+  empty: number;
+  failed: number;
+}
+
+/** End-of-run report body (counts and labels only). */
+export interface RunReport {
+  runId: string;
+  build?: string;
+  startedAt?: string;
+  endedAt?: string;
+  scraped: number;
+  learned: number;
+  recalled: number;
+  labels?: Record<string, RunLabelCounts>;
+}
+
+/** Change counts accumulated by a client, once per learn HTTP batch. */
+export interface ChangeStats {
+  changed: number;
+  unchanged: number;
+  firstSeen: number;
+  drift: DriftItem[];
+}
+
 /** Configuration for FetchBrain SDK */
 export interface FetchBrainConfig {
   /** API key for authentication */
@@ -21,6 +73,22 @@ export interface FetchBrainConfig {
    * warning. On Apify a name overrides the actor id.
    */
   scraper?: string;
+
+  /**
+   * Change detection: relearn known pages your `alwaysRun` handlers re-scrape so
+   * FetchBrain can tell what changed since last time. Off by default. Relearning
+   * counts toward your learn usage.
+   */
+  changeDetection?: ChangeDetectionConfig;
+
+  /**
+   * Send a small end-of-run report so FetchBrain can flag runs where many pages
+   * came back empty or failed. It contains exactly: the run id, start and end
+   * timestamps, scraped/learned/recalled counts, per-label page counts
+   * (scraped/empty/failed), and the build id only with `refreshOnRebuild`.
+   * No URLs or data. Default: true. Set false to disable. Separate from telemetry.
+   */
+  reportRuns?: boolean;
 
   /** Base URL for API (defaults to production) */
   baseUrl?: string;
@@ -181,6 +249,7 @@ export interface RecallResponse {
 export interface LearnRequest {
   entries: { request: RawRequest; data: LearnedData }[];
   build?: string;
+  ignore?: string[];
 }
 
 /** Learn response from the API */
@@ -188,6 +257,11 @@ export interface LearnResponse {
   learned: number;
   status: "success" | "partial" | "rejected";
   errors?: string[];
+  changed?: number;
+  unchanged?: number;
+  firstSeen?: number;
+  changedByLabel?: Record<string, number>;
+  drift?: DriftItem[];
 }
 
 /** Stats response from the API */

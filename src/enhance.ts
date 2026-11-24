@@ -1,11 +1,13 @@
 import { AsyncLocalStorage } from "async_hooks";
-import type { FetchBrainConfig, LearnedData, Logger, RawRequest, RecallResult, TelemetryData } from "./types";
+import { randomUUID } from "crypto";
+import type { DriftItem, FetchBrainConfig, LearnedData, Logger, RawRequest, RecallResult, TelemetryData } from "./types";
 import {
   FetchBrainClient,
   setScrapeContext,
   clearScrapeContext,
 } from "./client";
 import { createLogger } from "./logger";
+import { getPlatformBuildId } from "./native-context";
 import { collectTelemetry, TelemetryBuffer } from "./telemetry";
 
 /**
@@ -17,8 +19,41 @@ interface RequestContext {
   client: FetchBrainClient;
   learning: boolean;
   aiKnown: boolean; // Whether the brain already knows this URL
+  /** Known page re-scraped with change detection on: its items are relearned. */
+  relearn: boolean;
   /** Items this request pushed; learned together once the handler succeeds. */
   items: Record<string, unknown>[];
+}
+
+/** Run-report limits (mirror the API): labels per report, label length, run id length. */
+const REPORT_MAX_LABELS = 50;
+const REPORT_LABEL_MAX_CHARS = 64;
+const RUN_ID_MAX_CHARS = 128;
+const NO_LABEL = "_nolabel";
+
+function reportLabel(label?: string): string {
+  const trimmed = (label ?? "").trim().slice(0, REPORT_LABEL_MAX_CHARS);
+  return trimmed || NO_LABEL;
+}
+
+const pct = (rate: number) => `${Math.round(rate * 100)}%`;
+
+/** One-line, user-facing text for a drift finding. Field names only, never data. */
+function describeDrift(d: DriftItem): string {
+  const detail =
+    d.kind === "type_changed"
+      ? `type ${d.from} → ${d.to}`
+      : `filled ${pct(Number(d.from))} → ${pct(Number(d.to))}`;
+  return `⚠️ drift [${d.label}] ${d.field}: ${detail}`;
+}
+
+/** Change totals from the client; a client without them (or a failure) reads as none. */
+function safeChangeStats(client: FetchBrainClient) {
+  try {
+    return client.getChangeStats();
+  } catch {
+    return { changed: 0, unchanged: 0, firstSeen: 0, drift: [] as DriftItem[] };
+  }
 }
 
 const STRIP_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
@@ -251,6 +286,19 @@ export class FetchBrain {
       dropped: 0, // enqueue-time fetch skipped, but remembered data gone by execution
       startTime: 0,
     };
+    // Per-label page counts for the end-of-run report.
+    const labelStats = new Map<string, { scraped: number; empty: number; failed: number }>();
+    const labelCounts = (label?: string) => {
+      const key = reportLabel(label);
+      let counts = labelStats.get(key);
+      if (!counts && labelStats.size < REPORT_MAX_LABELS) {
+        counts = { scraped: 0, empty: 0, failed: 0 };
+        labelStats.set(key, counts);
+      } else if (!counts) {
+        logger.debug(`Run report: more than ${REPORT_MAX_LABELS} labels; not tracking "${key}"`);
+      }
+      return counts;
+    };
     // Background learns whose result has not been counted into runStats yet.
     const pendingLearns = new Set<Promise<void>>();
 
@@ -421,6 +469,9 @@ export class FetchBrain {
 
         // Track if brain data was used (to skip learning)
         let usedAIData = false;
+        // A known page whose handler runs anyway (alwaysRun) is relearned only
+        // when change detection is on, so changes can be detected.
+        const relearn = aiResult.known && config.changeDetection?.enabled === true;
         const originalPushData = context.pushData;
 
         // Per-record bookkeeping (e.g. metrics, counters) normally lives in the
@@ -481,6 +532,8 @@ export class FetchBrain {
 
         // 5. Run handler (either brain doesn't know, or alwaysRun matches this label)
         runStats.scraped++;
+        const counts = labelCounts(request.label);
+        if (counts) counts.scraped++;
         if (aiResult.known) {
           runStats.recalled++;
           logger.info(
@@ -502,7 +555,7 @@ export class FetchBrain {
           context.pushData = async (data: Record<string, unknown> | Record<string, unknown>[]) => {
             // Skip learning if the developer used brain data via use(), or the
             // brain already knows this URL (no need to re-learn).
-            if (!usedAIData && !aiResult.known) {
+            if (!usedAIData && (!aiResult.known || relearn)) {
               learnItems.push(...(Array.isArray(data) ? data : [data]));
             }
             return originalPushData.call(context, data);
@@ -515,17 +568,35 @@ export class FetchBrain {
           client,
           learning: config.learning !== false,
           aiKnown: aiResult.known,
+          relearn,
           items: learnItems,
         };
 
-        await asyncContext.run(requestContext, async () => {
-          await originalHandler.call(crawler, context);
-        });
+        try {
+          await asyncContext.run(requestContext, async () => {
+            await originalHandler.call(crawler, context);
+          });
+        } catch (handlerErr) {
+          if (counts) counts.failed++;
+          throw handlerErr;
+        }
+
+        // A page we would have learned from that pushed nothing counts as empty.
+        if (
+          counts &&
+          learnItems.length === 0 &&
+          originalPushData &&
+          config.learning !== false &&
+          !usedAIData &&
+          (!aiResult.known || relearn)
+        ) {
+          counts.empty++;
+        }
 
         // Learn only a page whose handler SUCCEEDED (a throw above skips this, so a
         // half-parsed page is never remembered). Not awaited: the learn batcher
         // sends it in the background and run() flushes whatever is still pending.
-        if (learnItems.length > 0 && !usedAIData && !aiResult.known) {
+        if (learnItems.length > 0 && !usedAIData && (!aiResult.known || relearn)) {
           // When the background backlog is full (API slower than the crawl), hold
           // this handler briefly so the crawl slows to the API's pace. Bounded:
           // past the wait the learn is dropped, never the crawl stalled.
@@ -649,6 +720,12 @@ export class FetchBrain {
       const originalRun = crawlerAny.run.bind(crawlerAny);
       crawlerAny.run = async (...args: unknown[]) => {
         runStats.startTime = Date.now();
+        const runStartedAt = new Date(runStats.startTime).toISOString();
+        // Per-run isolation: the report, `changed` and warnings cover this run() only.
+        labelStats.clear();
+        const runBase = { scraped: runStats.scraped, learned: runStats.learned, recalled: runStats.recalled };
+        const changeBase = safeChangeStats(client);
+        const runId = (process.env.APIFY_ACTOR_RUN_ID || randomUUID()).slice(0, RUN_ID_MAX_CHARS);
         try {
           const result = await originalRun(...args);
           return result;
@@ -676,13 +753,62 @@ export class FetchBrain {
               ? ((runStats.aiSkipped / managedRequests) * 100).toFixed(1)
               : "0";
 
+          let changes: { changed: number; drift: DriftItem[] } = { changed: 0, drift: [] };
+          try {
+            const now = safeChangeStats(client);
+            const key = (d: DriftItem) => `${d.label}\u0000${d.field}\u0000${d.kind}`;
+            const seen = new Set(changeBase.drift.map(key));
+            changes = {
+              changed: Math.max(0, now.changed - changeBase.changed) || 0,
+              drift: now.drift.filter((d) => !seen.has(key(d))),
+            };
+          } catch (diffErr) {
+            logger.debug(`Change summary skipped: ${diffErr}`);
+          }
+          const showChanged = config.changeDetection?.enabled === true || changes.changed > 0;
+
           logger.info(
             `🧠 Finished! recalled: ${runStats.recalled}/${managedRequests} (${savingsPercent}%), ` +
               `learned: ${runStats.learned}, scraped: ${runStats.scraped}` +
               (skipLabels ? `, bypassed: ${runStats.bypassed}` : "") +
               (runStats.dropped ? `, dropped: ${runStats.dropped}` : "") +
+              (showChanged ? `, changed: ${changes.changed}` : "") +
               `, duration: ${duration}s`,
           );
+
+          for (const item of changes.drift) {
+            try {
+              logger.warn(describeDrift(item));
+            } catch (warnErr) {
+              logger.debug(`Drift warning skipped: ${warnErr}`);
+            }
+          }
+
+          // Run report (counts + labels only). Bounded wait; never affects the crawl.
+          if (config.reportRuns !== false) {
+            try {
+              const labels = Object.fromEntries(labelStats);
+              const flags = await client.reportRun({
+                runId,
+                build: config.refreshOnRebuild ? getPlatformBuildId() : undefined,
+                startedAt: runStartedAt,
+                endedAt: new Date().toISOString(),
+                scraped: runStats.scraped - runBase.scraped,
+                learned: runStats.learned - runBase.learned,
+                recalled: runStats.recalled - runBase.recalled,
+                labels,
+              });
+              for (const flag of flags ?? []) {
+                logger.warn(
+                  flag.kind === "failed_pages"
+                    ? `⚠️ ${pct(flag.rate)} of ${flag.label} pages failed`
+                    : `⚠️ ${pct(flag.rate)} of ${flag.label} pages pushed no data`,
+                );
+              }
+            } catch (reportErr) {
+              logger.debug(`Run report skipped: ${reportErr}`);
+            }
+          }
         }
       };
     }
@@ -929,7 +1055,7 @@ export async function pushData(
   const ctx = getCurrentContext();
 
   // Learn if we're in a FetchBrain-enhanced request and the brain doesn't already know
-  if (ctx && ctx.learning && !ctx.aiKnown) {
+  if (ctx && ctx.learning && (!ctx.aiKnown || ctx.relearn)) {
     // Collected with the page's other items; the enhanced handler learns them
     // together once it succeeds (see the requestHandler wrapper).
     ctx.items.push(...(Array.isArray(data) ? data : [data]));
