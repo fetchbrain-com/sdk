@@ -5,6 +5,7 @@ import {
   FetchBrainClient,
   setScrapeContext,
   clearScrapeContext,
+  clipText,
 } from "./client";
 import { createLogger } from "./logger";
 import { getPlatformBuildId } from "./native-context";
@@ -42,9 +43,9 @@ const pct = (rate: number) => `${Math.round(rate * 100)}%`;
 function describeDrift(d: DriftItem): string {
   const detail =
     d.kind === "type_changed"
-      ? `type ${d.from} → ${d.to}`
+      ? `type ${clipText(d.from, 32)} → ${clipText(d.to, 32)}`
       : `filled ${pct(Number(d.from))} → ${pct(Number(d.to))}`;
-  return `⚠️ drift [${d.label}] ${d.field}: ${detail}`;
+  return `⚠️ drift [${clipText(d.label, 64)}] ${clipText(d.field, 64)}: ${detail}`;
 }
 
 /** Change totals from the client; a client without them (or a failure) reads as none. */
@@ -798,11 +799,20 @@ export class FetchBrain {
                 recalled: runStats.recalled - runBase.recalled,
                 labels,
               });
-              for (const flag of flags ?? []) {
+              for (const flag of Array.isArray(flags) ? flags : []) {
+                if (
+                  !flag ||
+                  (flag.kind !== "failed_pages" && flag.kind !== "empty_pages") ||
+                  typeof flag.rate !== "number" ||
+                  !Number.isFinite(flag.rate)
+                ) {
+                  continue;
+                }
+                const label = clipText(flag.label, 64);
                 logger.warn(
                   flag.kind === "failed_pages"
-                    ? `⚠️ ${pct(flag.rate)} of ${flag.label} pages failed`
-                    : `⚠️ ${pct(flag.rate)} of ${flag.label} pages pushed no data`,
+                    ? `⚠️ ${pct(flag.rate)} of ${label} pages failed`
+                    : `⚠️ ${pct(flag.rate)} of ${label} pages pushed no data`,
                 );
               }
             } catch (reportErr) {

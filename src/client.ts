@@ -15,6 +15,7 @@ import type {
   BatchConfig,
   LearnedData,
   ChangeStats,
+  DriftItem,
   RunFlag,
   RunReport,
 } from "./types";
@@ -122,6 +123,16 @@ export function clearScrapeContext(): void {
  * - Circuit breaker for graceful degradation
  * - Automatic retries and timeouts
  */
+/** Upper bound on drift findings kept per process (the API sends few; this guards a bad response). */
+const MAX_DRIFT_ITEMS = 100;
+const DRIFT_KINDS = new Set(["fill_drop", "missing", "type_changed"]);
+/** Strip control, bidi-override and zero-width characters (incl. ANSI escapes) and clamp length — drift text is printed to the console. */
+export const clipText = (v: unknown, max = 128): string =>
+  String(v)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]/g, " ")
+    .slice(0, max);
+
 export class FetchBrainClient {
   private config: Required<
     Omit<
@@ -550,14 +561,20 @@ export class FetchBrainClient {
         typeof item !== "object" ||
         typeof item.label !== "string" ||
         typeof item.field !== "string" ||
-        typeof item.kind !== "string"
+        !DRIFT_KINDS.has(item.kind)
       ) {
         continue;
       }
+      if (stats.drift.length >= MAX_DRIFT_ITEMS) break;
+      const clean: DriftItem = {
+        ...item,
+        label: clipText(item.label),
+        field: clipText(item.field),
+      };
       const exists = stats.drift.some(
-        (d) => d.label === item.label && d.field === item.field && d.kind === item.kind,
+        (d) => d.label === clean.label && d.field === clean.field && d.kind === clean.kind,
       );
-      if (!exists) stats.drift.push(item);
+      if (!exists) stats.drift.push(clean);
     }
   }
 

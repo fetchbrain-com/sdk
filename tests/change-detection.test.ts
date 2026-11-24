@@ -345,3 +345,24 @@ describe("run tracking and summary", () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe("drift hardening", () => {
+  it("caps stored drift items, strips control characters, and drops unknown kinds", async () => {
+    const drift = Array.from({ length: 150 }, (_, i) => ({ label: `L${i}`, field: "f", kind: "missing" }));
+    drift.unshift({ label: "a\u001b[31mred", field: "x".repeat(500), kind: "missing" });
+    drift.unshift({ label: "z", field: "f", kind: "evil" });
+    drift.unshift({ label: "b\u202eid\u200b", field: "f", kind: "missing" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ learned: 1, status: "success", drift }), { status: 201 })),
+    );
+    const c = new real({ apiKey: "k", baseUrl: "http://x", batch: { maxSize: 1, maxWait: 0 } });
+    await c.learn({ url: "https://a.test/1" }, { a: 1 });
+    const stored = c.getChangeStats().drift;
+    expect(stored).toHaveLength(100);
+    expect(stored[0].label).toBe("b id ");
+    expect(stored[1].label).toBe("a [31mred");
+    expect(stored[1].field).toHaveLength(128);
+    expect(stored.some((d) => d.kind === ("evil" as never))).toBe(false);
+  });
+});
