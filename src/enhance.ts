@@ -600,10 +600,13 @@ export class FetchBrain {
               runStats.recalled++;
               runStats.aiSkipped++;
               // Only a request pre-recalled at enqueue AND marked skipNavigation
-              // avoided its fetch; anything else was recalled after the fetch.
-              if (preRecalled?.known && (request as { skipNavigation?: boolean }).skipNavigation) {
+              // avoided its fetch. A late recall is a known page whose fetch DID
+              // happen. A user-set skipNavigation was never fetched, so it counts
+              // as recalled only — never as untapped savings or spend.
+              const skippedNav = (request as { skipNavigation?: boolean }).skipNavigation === true;
+              if (preRecalled?.known && skippedNav) {
                 runStats.requestsSkipped++;
-              } else {
+              } else if (!skippedNav) {
                 runStats.lateRecalls++;
               }
             }
@@ -885,7 +888,7 @@ export class FetchBrain {
           // preRecall off.
           if (run.lateRecalls > 0 && !crawlerAny.retryOnBlocked && config.preRecall !== false) {
             logger.info(
-              `${run.lateRecalls} pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch.`,
+              `${run.lateRecalls} pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch (non-GET requests also need an explicit uniqueKey).`,
             );
           }
 

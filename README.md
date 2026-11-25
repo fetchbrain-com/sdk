@@ -596,12 +596,15 @@ a run id, the first call uses it as-is and later calls in the same process
 
 Requests skipped is what saves you requests. Late recalls are pages that came
 from the queue without a [pre-recall](#recall-at-enqueue-time-prerecall):
-links from `enqueueLinks()` or the context `addRequests()`, requests you marked
-`skipNavigation` yourself, and every known page on a `retryOnBlocked` crawler.
+links from `enqueueLinks()` or the context `addRequests()`, and every known page
+on a `retryOnBlocked` crawler, plus non-GET requests without an explicit
+`uniqueKey` (pre-recall can't identify them at enqueue time; set one to let it).
+Known requests you marked `skipNavigation` yourself count only as `recalled`,
+never as late recalls: they were never fetched.
 When a run has late recalls, the summary line is followed by a tip such as:
 
 ```
-3 pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch.
+3 pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch (non-GET requests also need an explicit uniqueKey).
 ```
 
 The tip is not shown on `retryOnBlocked` crawlers (their blocked-check needs
@@ -685,7 +688,8 @@ tuning); aggregated statistics may inform recommendations for other users.
 
 **How long it's kept:** raw entries are deleted about 30 days after they're
 received (a daily cleanup), and all of your entries are deleted when you
-delete your account.
+delete your account (a very large history may take the daily cleanup a few
+days to finish, never longer than the 30 days above).
 Per-domain aggregate counts (requests, successes, blocks and block rate for a
 hostname, with no URLs and no account link) are kept. Per-domain statistics
 are aggregated per domain, not per account: entries from every account that

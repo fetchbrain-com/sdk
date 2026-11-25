@@ -359,7 +359,7 @@ describe("run tracking and summary", () => {
 });
 
 describe("run tracking: requests skipped and late recalls", () => {
-  type QReq = { url: string; label?: string; skipNavigation?: boolean; userData?: Record<string, unknown> };
+  type QReq = { url: string; method?: string; uniqueKey?: string; label?: string; skipNavigation?: boolean; userData?: Record<string, unknown> };
   /**
    * A crawler with a request queue: run(reqs) enqueues through this.addRequests (the
    * FetchBrain wrapper once enhanced), then handles each request, retrying a failed
@@ -416,13 +416,28 @@ describe("run tracking: requests skipped and late recalls", () => {
     expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 0, lateRecalls: 1 });
   });
 
-  it("3. a known page the user marked skipNavigation counts as a late recall", async () => {
+  it("3. a known page the user marked skipNavigation is recalled, not a late recall (never fetched)", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
     knownBulk();
     m.recall.mockResolvedValue(KNOWN);
     const e = FetchBrain.enhance(queueCrawler(async () => {}), base);
     await e.run([{ url: "https://a.test/1", skipNavigation: true }]);
     expect(m.recallBulk).not.toHaveBeenCalled();
+    expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 0, lateRecalls: 0 });
+    expect(info.mock.calls.map((c) => c.join(" ")).join("\n")).not.toContain(TIP);
+    info.mockRestore();
+  });
+
+  it("3b. a fetched non-GET without an explicit uniqueKey is a late recall, and the tip says to set one", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    knownBulk();
+    m.recall.mockResolvedValue(KNOWN);
+    const e = FetchBrain.enhance(queueCrawler(async () => {}), base);
+    await e.run([{ url: "https://a.test/api", method: "POST" }]);
+    expect(m.recallBulk).not.toHaveBeenCalled(); // pre-recall can't identify it at enqueue
     expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 0, lateRecalls: 1 });
+    expect(info.mock.calls.map((c) => c.join(" ")).join("\n")).toContain("non-GET requests also need an explicit uniqueKey");
+    info.mockRestore();
   });
 
   it("4. an alwaysRun page counts as recalled + scraped only", async () => {
@@ -536,7 +551,7 @@ describe("run tracking: requests skipped and late recalls", () => {
     const tips = info.mock.calls.map((c) => c.join(" ")).filter((l) => l.includes(TIP));
     expect(tips).toHaveLength(1);
     expect(tips[0]).toContain(
-      "2 pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch.",
+      "2 pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch (non-GET requests also need an explicit uniqueKey).",
     );
     expect(report()).toMatchObject({ lateRecalls: 2, requestsSkipped: 0 });
 
