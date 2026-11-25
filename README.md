@@ -254,6 +254,7 @@ interface FetchBrainConfig {
   extractForLearning?: (data: unknown) => Record<string, unknown>; // Transform each record before it is learned
   refreshOnRebuild?: boolean; // Scope learn, recall and ask to the current build (*_BUILD_ID env var) (default: false)
   timeout?: number; // Handler-time recall, stats and telemetry timeout in ms (default: 1500)
+  askTimeout?: number; // ask() timeout in ms (default: 60000); a per-call `timeout` wins
   batch?: { maxSize?: number; maxWait?: number }; // Request batching (default: 50 items / 50ms)
   circuitBreaker?: {
     failureThreshold?: number; // Failures before the circuit opens (default: 3)
@@ -420,6 +421,18 @@ const res = await client.ask("blue widgets under $50", {
 console.log(res.model); // slug actually used (reveals fallbacks)
 ```
 
+An answer can take tens of seconds, so `ask()` waits up to 60s by default.
+Change that for every call with the `askTimeout` option, or for one call
+with `timeout` (ms), which wins over `askTimeout`:
+
+```typescript
+const client = new FetchBrainClient({ apiKey, askTimeout: 30_000 });
+const res = await client.ask("blue widgets under $50", { answer: true, timeout: 90_000 });
+```
+
+`ask()` has its own circuit breaker: slow or failing asks never pause recall
+or learn for your crawl, and a paused recall doesn't stop `ask()`.
+
 Every plan includes a monthly ask allowance (100 free → 60,000 on Scale);
 asks never consume your recall quota.
 
@@ -517,7 +530,7 @@ Timeouts per call type:
 | Recall in the handler (batched) | `timeout` option, default 1.5s |
 | Recall at enqueue (`preRecall`, bulk) | 3s per chunk of up to 100 requests |
 | Learn (batched, sent in the background) | 5s |
-| `ask()` | 10s |
+| `ask()` | `askTimeout` option (default 60s), or `timeout` per call |
 | `stats()` and telemetry | `timeout` option, default 1.5s |
 
 A FetchBrain outage costs you *optimization*, not your crawl: SDK calls

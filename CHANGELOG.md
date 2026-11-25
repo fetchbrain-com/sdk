@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `askTimeout` option (default 60s) and a per-call `timeout` for `ask()`. The per-call
+  value wins over the option.
+
+### Changed
+- The default `ask()` timeout is now 60s (was a fixed 10s), so answer mode, which can take
+  tens of seconds, no longer comes back `unavailable` while the API is still answering.
+
+### Fixed
+- `ask()` has its own circuit breaker. Slow or failing asks no longer pause recall and
+  learn for the rest of the crawl, and a paused recall no longer blocks `ask()`. A
+  rejected API key still pauses `ask()` too.
+
 ## [0.9.0] - 2026-11-24
 
 ### Added

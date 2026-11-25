@@ -52,7 +52,10 @@ const MAX_LEARN_DATA_BYTES = 100 * 1024; // API's per-entry cap (JSON length of 
 function isOutage(error: unknown): boolean {
   return !(error instanceof ApiError && error.status >= 400 && error.status < 500);
 }
-const ASK_TIMEOUT = 10000; // Ask searches memory and may generate an answer; give it room like learn
+// Ask searches memory and, with `answer: true`, generates an answer: that takes
+// 7-46s against the real API, so the default leaves room. Override with the
+// `askTimeout` option or a per-call `timeout`.
+const DEFAULT_ASK_TIMEOUT = 60000;
 
 /** Clamp a user-configured batch size to an endpoint's per-request cap. */
 function clampBatch(
@@ -145,6 +148,11 @@ export class FetchBrainClient {
       "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper" | "changeDetection"
     >;
   private circuitBreaker: CircuitBreaker;
+  /**
+   * ask() has its own breaker: slow or failing asks must not pause recall/learn,
+   * and an open recall breaker must not block ask.
+   */
+  private askCircuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
   private learnBatcher: LearnBatcher;
   private logger: Logger;
@@ -179,6 +187,7 @@ export class FetchBrainClient {
       alwaysRun: config.alwaysRun ?? false,
       refreshOnRebuild: config.refreshOnRebuild ?? false,
       timeout: config.timeout || DEFAULT_TIMEOUT,
+      askTimeout: config.askTimeout || DEFAULT_ASK_TIMEOUT,
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,
       learnUrlField: config.learnUrlField,
@@ -207,6 +216,10 @@ export class FetchBrainClient {
     }
 
     this.circuitBreaker = new CircuitBreaker(
+      this.config.circuitBreaker,
+      this.logger,
+    );
+    this.askCircuitBreaker = new CircuitBreaker(
       this.config.circuitBreaker,
       this.logger,
     );
@@ -368,12 +381,14 @@ export class FetchBrainClient {
    * menu (e.g. "llama-3.3-70b", "kimi-k2.5" — premium models cost extra ask
    * credits), or "byok" to answer with your own linked provider model.
    * Omit it for the default model.
+   *
+   * `timeout` (ms) overrides the `askTimeout` option for this call.
    */
   async ask(
     question: string,
-    opts?: { answer?: boolean; limit?: number; model?: string },
+    opts?: { answer?: boolean; limit?: number; model?: string; timeout?: number },
   ): Promise<AskResponse> {
-    if (this.circuitBreaker.isOpen()) {
+    if (this.isKeyRejected() || this.askCircuitBreaker.isOpen()) {
       return { sources: [], status: "unavailable" };
     }
 
@@ -402,14 +417,14 @@ export class FetchBrainClient {
           method: "POST",
           body: JSON.stringify(askBody),
         },
-        ASK_TIMEOUT,
+        opts?.timeout || this.config.askTimeout,
       );
-      this.circuitBreaker.recordSuccess();
+      this.askCircuitBreaker.recordSuccess();
       return response;
     } catch (error) {
       // A 4xx means the request itself was rejected (bad input, unknown
       // model slug, byok not linked, etc.) — that's not the API degrading,
-      // so don't trip the breaker for every scraper sharing this client,
+      // so don't trip the ask breaker,
       // and tell the caller why instead of masking it as an outage.
       if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
         this.logger.debug("Ask rejected:", error);
@@ -419,7 +434,7 @@ export class FetchBrainClient {
           error: error.serverError ?? error.message,
         };
       }
-      this.circuitBreaker.recordFailure();
+      this.askCircuitBreaker.recordFailure();
       this.logger.debug("Ask request failed:", error);
       return { sources: [], status: "unavailable" };
     }
@@ -707,6 +722,7 @@ export class FetchBrainClient {
    */
   resetCircuit(): void {
     this.circuitBreaker.reset();
+    this.askCircuitBreaker.reset();
   }
 
   /**

@@ -179,6 +179,12 @@ export interface FetchBrainConfig {
   /** Request timeout in ms (default: 1500ms; see DEFAULT_TIMEOUT in client.ts) */
   timeout?: number;
 
+  /**
+   * ask() timeout in ms (default: 60000). Answer mode can take tens of seconds.
+   * A per-call `timeout` passed to ask() wins over this.
+   */
+  askTimeout?: number;
+
   /** Enable debug logging */
   debug?: boolean;
 
