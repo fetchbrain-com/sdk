@@ -176,12 +176,16 @@ export interface FetchBrainConfig {
    */
   refreshOnRebuild?: boolean;
 
-  /** Request timeout in ms (default: 1500ms; see DEFAULT_TIMEOUT in client.ts) */
+  /**
+   * Request timeout in ms (default: 1500ms; see DEFAULT_TIMEOUT in client.ts).
+   * Accepts 1-2147483647; anything else (0, negative, NaN, Infinity) uses the default.
+   */
   timeout?: number;
 
   /**
    * ask() timeout in ms (default: 60000). Answer mode can take tens of seconds.
-   * A per-call `timeout` passed to ask() wins over this.
+   * A per-call `timeout` passed to ask() wins over this. Both accept 1-2147483647;
+   * anything else (0, negative, NaN, Infinity) uses the default.
    */
   askTimeout?: number;
 

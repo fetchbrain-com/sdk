@@ -253,8 +253,8 @@ interface FetchBrainConfig {
   onRecalled?: (event: RecalledEvent) => void | Promise<void>; // Per-record hook when recalled data is delivered
   extractForLearning?: (data: unknown) => Record<string, unknown>; // Transform each record before it is learned
   refreshOnRebuild?: boolean; // Scope learn, recall and ask to the current build (*_BUILD_ID env var) (default: false)
-  timeout?: number; // Handler-time recall, stats and telemetry timeout in ms (default: 1500)
-  askTimeout?: number; // ask() timeout in ms (default: 60000); a per-call `timeout` wins
+  timeout?: number; // Handler-time recall, stats and telemetry timeout in ms, 1-2147483647 (default: 1500)
+  askTimeout?: number; // ask() timeout in ms, 1-2147483647 (default: 60000); a per-call `timeout` wins
   batch?: { maxSize?: number; maxWait?: number }; // Request batching (default: 50 items / 50ms)
   circuitBreaker?: {
     failureThreshold?: number; // Failures before the circuit opens (default: 3)
@@ -423,7 +423,9 @@ console.log(res.model); // slug actually used (reveals fallbacks)
 
 An answer can take tens of seconds, so `ask()` waits up to 60s by default.
 Change that for every call with the `askTimeout` option, or for one call
-with `timeout` (ms), which wins over `askTimeout`:
+with `timeout` (ms), which wins over `askTimeout`. Both accept 1 to 2147483647 ms
+(about 24.8 days); any other value (0, negative, `NaN`, `Infinity`) is ignored and
+the default is used:
 
 ```typescript
 const client = new FetchBrainClient({ apiKey, askTimeout: 30_000 });

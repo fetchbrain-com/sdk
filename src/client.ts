@@ -56,6 +56,23 @@ function isOutage(error: unknown): boolean {
 // 7-46s against the real API, so the default leaves room. Override with the
 // `askTimeout` option or a per-call `timeout`.
 const DEFAULT_ASK_TIMEOUT = 60000;
+// setTimeout's largest delay. Node clamps anything above it, below 1, NaN or
+// Infinity to ~1ms, so `askTimeout: Infinity` would abort every ask at once and
+// trip the ask breaker.
+const MAX_TIMER_MS = 2_147_483_647;
+
+/**
+ * A user-supplied timeout in ms, or `fallback` when it is missing or outside
+ * 1..MAX_TIMER_MS. Never throws: a bad option must not break the crawl.
+ */
+function resolveTimeout(value: unknown, fallback: number, name: string, logger: Logger): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= MAX_TIMER_MS) {
+    return value;
+  }
+  logger.debug(`ignoring invalid ${name} (${String(value)}); using ${fallback}ms. Use 1-${MAX_TIMER_MS} ms.`);
+  return fallback;
+}
 
 /** Clamp a user-configured batch size to an endpoint's per-request cap. */
 function clampBatch(
@@ -179,6 +196,7 @@ export class FetchBrainClient {
   private changeStats: ChangeStats = { changed: 0, unchanged: 0, firstSeen: 0, drift: [] };
 
   constructor(config: FetchBrainConfig) {
+    this.logger = createLogger(config.debug ? "debug" : "info", true);
     this.config = {
       apiKey: config.apiKey,
       baseUrl: config.baseUrl || DEFAULT_BASE_URL,
@@ -186,8 +204,8 @@ export class FetchBrainClient {
       learning: config.learning ?? true,
       alwaysRun: config.alwaysRun ?? false,
       refreshOnRebuild: config.refreshOnRebuild ?? false,
-      timeout: config.timeout || DEFAULT_TIMEOUT,
-      askTimeout: config.askTimeout || DEFAULT_ASK_TIMEOUT,
+      timeout: resolveTimeout(config.timeout, DEFAULT_TIMEOUT, "timeout", this.logger),
+      askTimeout: resolveTimeout(config.askTimeout, DEFAULT_ASK_TIMEOUT, "askTimeout", this.logger),
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,
       learnUrlField: config.learnUrlField,
@@ -201,8 +219,6 @@ export class FetchBrainClient {
       changeDetection: config.changeDetection,
       reportRuns: config.reportRuns ?? true,
     };
-
-    this.logger = createLogger(this.config.debug ? "debug" : "info", true);
 
     // Scraper name, resolved once: invalid values are dropped (never thrown).
     const scraper = resolveScraperName(config.scraper);
@@ -222,6 +238,7 @@ export class FetchBrainClient {
     this.askCircuitBreaker = new CircuitBreaker(
       this.config.circuitBreaker,
       this.logger,
+      "Ask",
     );
 
     // Each batcher's maxSize is clamped to its endpoint's per-request cap — an
@@ -382,7 +399,8 @@ export class FetchBrainClient {
    * credits), or "byok" to answer with your own linked provider model.
    * Omit it for the default model.
    *
-   * `timeout` (ms) overrides the `askTimeout` option for this call.
+   * `timeout` (ms, 1-2147483647) overrides the `askTimeout` option for this call;
+   * an invalid value falls back to `askTimeout`.
    */
   async ask(
     question: string,
@@ -417,7 +435,7 @@ export class FetchBrainClient {
           method: "POST",
           body: JSON.stringify(askBody),
         },
-        opts?.timeout || this.config.askTimeout,
+        resolveTimeout(opts?.timeout, this.config.askTimeout, "ask timeout", this.logger),
       );
       this.askCircuitBreaker.recordSuccess();
       return response;

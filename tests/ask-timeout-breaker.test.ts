@@ -99,7 +99,81 @@ describe("ask timeout and its own circuit breaker", () => {
     });
   });
 
+  describe("invalid timeouts fall back to the default", () => {
+    // Node clamps these setTimeout delays to ~1ms, which would abort every call.
+    const invalid: [string, number][] = [
+      ["Infinity", Infinity],
+      ["-5", -5],
+      ["0", 0],
+      ["NaN", NaN],
+      ["3_600_000_000", 3_600_000_000],
+    ];
+
+    it.each(invalid)("askTimeout %s uses 60s", (_name, value) => {
+      expect(newClient({ askTimeout: value }).getConfig().askTimeout).toBe(60_000);
+    });
+
+    it.each(invalid)("timeout %s uses 1500ms", (_name, value) => {
+      expect(newClient({ timeout: value }).getConfig().timeout).toBe(1_500);
+    });
+
+    it("keeps a valid value", () => {
+      const config = newClient({ askTimeout: 5_000, timeout: 5_000 }).getConfig();
+      expect(config.askTimeout).toBe(5_000);
+      expect(config.timeout).toBe(5_000);
+    });
+
+    it("does not throw and logs a debug line", () => {
+      const debug = vi.spyOn(console, "debug").mockImplementation(() => {});
+      expect(() => newClient({ askTimeout: Infinity, debug: true })).not.toThrow();
+      expect(debug.mock.calls.some((c) => String(c[0]).includes("ignoring invalid askTimeout"))).toBe(true);
+      debug.mockRestore();
+    });
+
+    it.each(invalid)("per-call timeout %s uses askTimeout instead of aborting at once", async (_name, value) => {
+      vi.useFakeTimers();
+      routes.ask = delayed(5_000, ASK_OK);
+      const client = newClient({ askTimeout: 10_000 });
+      const p = client.ask("q", { timeout: value });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(p).resolves.toMatchObject({ status: "ok" });
+    });
+
+    it("a 5000ms per-call timeout is kept", async () => {
+      vi.useFakeTimers();
+      routes.ask = delayed(8_000, ASK_OK);
+      const client = newClient();
+      const p = client.ask("q", { timeout: 5_000 });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expect(p).resolves.toEqual({ sources: [], status: "unavailable" });
+    });
+  });
+
   describe("breaker isolation", () => {
+    it("the ask breaker's open warning names Ask and says recall and learn are unaffected", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      routes.ask = async () => json({ error: "boom" }, 503);
+      const client = newClient();
+      for (let i = 0; i < 3; i++) await client.ask("q");
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      warn.mockRestore();
+      const opened = lines.find((l) => l.includes("circuit opened"));
+      expect(opened).toContain("Ask circuit opened after 3 failures");
+      expect(opened).toContain("recall and learn are unaffected");
+      expect(opened).not.toContain("without optimization");
+    });
+
+    it("the recall breaker's open warning is unchanged", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      routes.recall = async () => json({ error: "boom" }, 503);
+      const client = newClient();
+      for (let i = 0; i < 3; i++) await client.recall({ url: `https://a.test/${i}` });
+      const lines = warn.mock.calls.map((c) => String(c[0]));
+      warn.mockRestore();
+      expect(lines.some((l) => l.includes("Circuit opened after 3 failures. Scraper will continue without optimization."))).toBe(true);
+      expect(lines.some((l) => l.includes("Ask circuit"))).toBe(false);
+    });
+
     it("ask failures do not open the recall breaker", async () => {
       routes.ask = async () => json({ error: "boom" }, 503);
       const client = newClient();

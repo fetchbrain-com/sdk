@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ask()` has its own circuit breaker. Slow or failing asks no longer pause recall and
   learn for the rest of the crawl, and a paused recall no longer blocks `ask()`. A
   rejected API key still pauses `ask()` too.
+- `timeout`, `askTimeout` and the per-call `ask()` `timeout` now accept 1 to 2147483647 ms.
+  Any other value (0, negative, `NaN`, `Infinity`) uses the default instead of aborting
+  every call after about 1ms.
+- When the ask circuit breaker opens, its warning now says it is the Ask breaker and that
+  recall and learn are unaffected.
 
 ## [0.9.0] - 2026-11-24
 
