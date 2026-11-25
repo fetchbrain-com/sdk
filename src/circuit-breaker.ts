@@ -21,10 +21,20 @@ export class CircuitBreaker {
   private lastFailureTime = 0;
   private config: CircuitBreakerConfig;
   private logger: Logger;
+  private name?: string;
 
-  constructor(config: Partial<CircuitBreakerConfig> = {}, logger: Logger) {
+  /**
+   * `name` labels this breaker's log lines when a client runs more than one
+   * (the ask breaker opening must not read as if recall and learn stopped).
+   */
+  constructor(config: Partial<CircuitBreakerConfig> = {}, logger: Logger, name?: string) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = logger;
+    this.name = name;
+  }
+
+  private label(message: string): string {
+    return this.name ? `${this.name} circuit: ${message}` : message;
   }
 
   /**
@@ -38,7 +48,7 @@ export class CircuitBreaker {
     if (this.state === 'open') {
       const now = Date.now();
       if (now - this.lastFailureTime >= this.config.resetTimeout) {
-        this.logger.info('Circuit transitioning to half-open, testing API...');
+        this.logger.info(this.label('Circuit transitioning to half-open, testing API...'));
         this.state = 'half-open';
         this.successes = 0;
         return false;
@@ -57,7 +67,7 @@ export class CircuitBreaker {
     if (this.state === 'half-open') {
       this.successes++;
       if (this.successes >= this.config.successThreshold) {
-        this.logger.info('API recovered, circuit closed');
+        this.logger.info(this.label('API recovered, circuit closed'));
         this.reset();
       }
     } else if (this.state === 'closed') {
@@ -74,15 +84,18 @@ export class CircuitBreaker {
     this.lastFailureTime = Date.now();
 
     if (this.state === 'half-open') {
-      this.logger.warn('API still failing, circuit reopened');
+      this.logger.warn(this.label('API still failing, circuit reopened'));
       this.state = 'open';
       return;
     }
 
     if (this.failures >= this.config.failureThreshold) {
       this.logger.warn(
-        `Circuit opened after ${this.failures} failures. ` +
-        'Scraper will continue without optimization.'
+        this.name
+          ? `${this.name} circuit opened after ${this.failures} failures. ` +
+            `${this.name} calls are paused; recall and learn are unaffected.`
+          : `Circuit opened after ${this.failures} failures. ` +
+            'Scraper will continue without optimization.'
       );
       this.state = 'open';
     }

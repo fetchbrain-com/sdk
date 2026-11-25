@@ -52,7 +52,27 @@ const MAX_LEARN_DATA_BYTES = 100 * 1024; // API's per-entry cap (JSON length of 
 function isOutage(error: unknown): boolean {
   return !(error instanceof ApiError && error.status >= 400 && error.status < 500);
 }
-const ASK_TIMEOUT = 10000; // Ask searches memory and may generate an answer; give it room like learn
+// Ask searches memory and, with `answer: true`, generates an answer: that takes
+// 7-46s against the real API, so the default leaves room. Override with the
+// `askTimeout` option or a per-call `timeout`.
+const DEFAULT_ASK_TIMEOUT = 60000;
+// setTimeout's largest delay. Node clamps anything above it, below 1, NaN or
+// Infinity to ~1ms, so `askTimeout: Infinity` would abort every ask at once and
+// trip the ask breaker.
+const MAX_TIMER_MS = 2_147_483_647;
+
+/**
+ * A user-supplied timeout in ms, or `fallback` when it is missing or outside
+ * 1..MAX_TIMER_MS. Never throws: a bad option must not break the crawl.
+ */
+function resolveTimeout(value: unknown, fallback: number, name: string, logger: Logger): number {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 1 && value <= MAX_TIMER_MS) {
+    return value;
+  }
+  logger.debug(`ignoring invalid ${name} (${String(value)}); using ${fallback}ms. Use 1-${MAX_TIMER_MS} ms.`);
+  return fallback;
+}
 
 /** Clamp a user-configured batch size to an endpoint's per-request cap. */
 function clampBatch(
@@ -145,6 +165,11 @@ export class FetchBrainClient {
       "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper" | "changeDetection"
     >;
   private circuitBreaker: CircuitBreaker;
+  /**
+   * ask() has its own breaker: slow or failing asks must not pause recall/learn,
+   * and an open recall breaker must not block ask.
+   */
+  private askCircuitBreaker: CircuitBreaker;
   private batcher: RequestBatcher;
   private learnBatcher: LearnBatcher;
   private logger: Logger;
@@ -171,6 +196,7 @@ export class FetchBrainClient {
   private changeStats: ChangeStats = { changed: 0, unchanged: 0, firstSeen: 0, drift: [] };
 
   constructor(config: FetchBrainConfig) {
+    this.logger = createLogger(config.debug ? "debug" : "info", true);
     this.config = {
       apiKey: config.apiKey,
       baseUrl: config.baseUrl || DEFAULT_BASE_URL,
@@ -178,7 +204,8 @@ export class FetchBrainClient {
       learning: config.learning ?? true,
       alwaysRun: config.alwaysRun ?? false,
       refreshOnRebuild: config.refreshOnRebuild ?? false,
-      timeout: config.timeout || DEFAULT_TIMEOUT,
+      timeout: resolveTimeout(config.timeout, DEFAULT_TIMEOUT, "timeout", this.logger),
+      askTimeout: resolveTimeout(config.askTimeout, DEFAULT_ASK_TIMEOUT, "askTimeout", this.logger),
       debug: config.debug || false,
       extractForLearning: config.extractForLearning,
       learnUrlField: config.learnUrlField,
@@ -192,8 +219,6 @@ export class FetchBrainClient {
       changeDetection: config.changeDetection,
       reportRuns: config.reportRuns ?? true,
     };
-
-    this.logger = createLogger(this.config.debug ? "debug" : "info", true);
 
     // Scraper name, resolved once: invalid values are dropped (never thrown).
     const scraper = resolveScraperName(config.scraper);
@@ -209,6 +234,11 @@ export class FetchBrainClient {
     this.circuitBreaker = new CircuitBreaker(
       this.config.circuitBreaker,
       this.logger,
+    );
+    this.askCircuitBreaker = new CircuitBreaker(
+      this.config.circuitBreaker,
+      this.logger,
+      "Ask",
     );
 
     // Each batcher's maxSize is clamped to its endpoint's per-request cap — an
@@ -368,12 +398,15 @@ export class FetchBrainClient {
    * menu (e.g. "llama-3.3-70b", "kimi-k2.5" — premium models cost extra ask
    * credits), or "byok" to answer with your own linked provider model.
    * Omit it for the default model.
+   *
+   * `timeout` (ms, 1-2147483647) overrides the `askTimeout` option for this call;
+   * an invalid value falls back to `askTimeout`.
    */
   async ask(
     question: string,
-    opts?: { answer?: boolean; limit?: number; model?: string },
+    opts?: { answer?: boolean; limit?: number; model?: string; timeout?: number },
   ): Promise<AskResponse> {
-    if (this.circuitBreaker.isOpen()) {
+    if (this.isKeyRejected() || this.askCircuitBreaker.isOpen()) {
       return { sources: [], status: "unavailable" };
     }
 
@@ -402,14 +435,14 @@ export class FetchBrainClient {
           method: "POST",
           body: JSON.stringify(askBody),
         },
-        ASK_TIMEOUT,
+        resolveTimeout(opts?.timeout, this.config.askTimeout, "ask timeout", this.logger),
       );
-      this.circuitBreaker.recordSuccess();
+      this.askCircuitBreaker.recordSuccess();
       return response;
     } catch (error) {
       // A 4xx means the request itself was rejected (bad input, unknown
       // model slug, byok not linked, etc.) — that's not the API degrading,
-      // so don't trip the breaker for every scraper sharing this client,
+      // so don't trip the ask breaker,
       // and tell the caller why instead of masking it as an outage.
       if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
         this.logger.debug("Ask rejected:", error);
@@ -419,7 +452,7 @@ export class FetchBrainClient {
           error: error.serverError ?? error.message,
         };
       }
-      this.circuitBreaker.recordFailure();
+      this.askCircuitBreaker.recordFailure();
       this.logger.debug("Ask request failed:", error);
       return { sources: [], status: "unavailable" };
     }
@@ -707,6 +740,7 @@ export class FetchBrainClient {
    */
   resetCircuit(): void {
     this.circuitBreaker.reset();
+    this.askCircuitBreaker.reset();
   }
 
   /**

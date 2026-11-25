@@ -162,9 +162,9 @@ describe("ask wire contract", () => {
     });
   });
 
-  it("DOES trip the circuit breaker on a 5xx", async () => {
+  it("DOES trip ask's own circuit breaker on a 5xx, not the recall one", async () => {
     const client = new FetchBrainClient({ apiKey: "fb_test_123" });
-    fetchMock.mockResolvedValue(
+    fetchMock.mockImplementation(async () =>
       new Response(JSON.stringify({ error: "internal" }), {
         status: 500,
         statusText: "Internal Server Error",
@@ -174,7 +174,12 @@ describe("ask wire contract", () => {
     for (let i = 0; i < 3; i++) {
       await client.ask("anything");
     }
+    // Ask breaker is open: the next ask answers locally without a request.
+    fetchMock.mockClear();
+    expect(await client.ask("anything")).toEqual({ sources: [], status: "unavailable" });
+    expect(fetchMock).not.toHaveBeenCalled();
 
-    expect(client.getCircuitState()).toMatchObject({ state: "open" });
+    // The recall/learn breaker is untouched.
+    expect(client.getCircuitState()).toMatchObject({ state: "closed", failures: 0 });
   });
 });
