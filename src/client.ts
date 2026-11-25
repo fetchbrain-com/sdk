@@ -157,12 +157,12 @@ export class FetchBrainClient {
   private config: Required<
     Omit<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper" | "changeDetection"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "logUrl" | "scraper" | "changeDetection"
     >
   > &
     Pick<
       FetchBrainConfig,
-      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "scraper" | "changeDetection"
+      "extractForLearning" | "learnUrlField" | "batch" | "circuitBreaker" | "skipLabels" | "preRecall" | "onRecalled" | "logUrl" | "scraper" | "changeDetection"
     >;
   private circuitBreaker: CircuitBreaker;
   /**
@@ -215,6 +215,7 @@ export class FetchBrainClient {
       skipLabels: config.skipLabels, // enhance-only; stored so getConfig() round-trips
       preRecall: config.preRecall, // enhance-only; stored so getConfig() round-trips
       onRecalled: config.onRecalled, // enhance-only; stored so getConfig() round-trips
+      logUrl: config.logUrl, // enhance-only; stored so getConfig() round-trips
       scraper: config.scraper,
       changeDetection: config.changeDetection,
       reportRuns: config.reportRuns ?? true,

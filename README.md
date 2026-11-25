@@ -33,9 +33,6 @@ $ node scraper.js                      # first run — the brain learns
 INFO  FetchBrain: 🧠 Finished! recalled: 0/3 (0.0%), learned: 3, scraped: 3, duration: 6.4s
 
 $ node scraper.js                      # every run after that
-INFO  FetchBrain: Recalled: https://example.com/p/1042 [default]
-INFO  FetchBrain: Recalled: https://example.com/p/1043 [default]
-INFO  FetchBrain: Recalled: https://example.com/p/1044 [default]
 INFO  FetchBrain: 🧠 Finished! recalled: 3/3 (100.0%), learned: 0, scraped: 0, duration: 0.3s
 ```
 
@@ -266,6 +263,7 @@ interface FetchBrainConfig {
   reportRuns?: boolean; // Send the end-of-run report: run id, timestamps, counts per label (default: true)
   learnUrlField?: string; // Accepted but not currently applied
   debug?: boolean; // Enable debug logging (default: false)
+  logUrl?: (request: LogUrlRequest) => string | undefined; // How a request appears in SDK log lines (default: its URL)
 }
 ```
 
@@ -364,6 +362,33 @@ FetchBrain.enhance(crawler, {
 ```
 
 Hook errors are swallowed (logged at debug) — they never break the crawl.
+
+### Logging and request URLs (`logUrl`)
+
+Per-request lines (recalled, learning, bypassed, used brain data) are logged
+at debug level only, so they print only with `debug: true`. At the default
+level you see warnings and the end-of-run summary.
+
+A log line that names a request shows its URL. If your URLs are private (an
+internal or mobile API endpoint, a token in the query string) or your run log
+is visible to others, pass `logUrl` to control what is printed:
+
+```typescript
+FetchBrain.enhance(crawler, {
+  apiKey: process.env.FETCHBRAIN_API_KEY,
+  // receives { url, uniqueKey, label, userData }
+  logUrl: ({ label, userData }) => `${label ?? "default"} #${userData.productId}`,
+  // or hide it entirely: logUrl: () => undefined
+});
+```
+
+- Return a string to print it in place of the URL, or `undefined` to print
+  the line without one.
+- If `logUrl` throws or returns anything other than a non-empty string, the
+  URL is left out (never printed raw) and the crawl continues.
+- It applies to FetchBrain's log lines and error messages only. Recall and
+  learn still send the request to the API (see
+  [What leaves your process](#what-leaves-your-process)).
 
 ### Choosing which handlers run
 

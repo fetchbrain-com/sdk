@@ -193,6 +193,15 @@ export interface FetchBrainConfig {
   debug?: boolean;
 
   /**
+   * Controls how a request appears in FetchBrain's log lines and error messages (it changes output
+   * only; recall and learn still send the request to the API). Return the text to print
+   * in place of the URL, or `undefined` to print the line without it. If it throws (or
+   * returns anything but a non-empty string), the URL is omitted, never shown raw, and
+   * the crawl continues. Default: the request URL.
+   */
+  logUrl?: (request: LogUrlRequest) => string | undefined;
+
+  /**
    * Field name to use as URL for learning.
    * Note: accepted and stored, but not currently applied by the SDK.
    */
@@ -222,6 +231,14 @@ export interface FetchBrainConfig {
  * pushed as-is — Crawlee's pushData accepts both shapes.
  */
 export type LearnedData = Record<string, unknown> | Record<string, unknown>[];
+
+/** The request passed to `logUrl` (userData excludes FetchBrain's own bookkeeping keys) */
+export interface LogUrlRequest {
+  url: string;
+  uniqueKey: string;
+  label?: string;
+  userData: Record<string, unknown>;
+}
 
 /** Info passed to `onRecalled` when remembered data is delivered in place of a live scrape */
 export interface RecalledEvent {

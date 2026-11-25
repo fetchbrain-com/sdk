@@ -15,7 +15,8 @@
       "types": "./dist/mock/index.d.ts",
       "import": "./dist/mock/index.mjs",
       "require": "./dist/mock/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"

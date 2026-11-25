@@ -10,10 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `askTimeout` option (default 60s) and a per-call `timeout` for `ask()`. The per-call
   value wins over the option.
+- `logUrl` option: controls how a request appears in FetchBrain's log lines and error
+  messages. Return replacement text, or `undefined` to leave the URL out. If it throws, the
+  URL is omitted, never printed raw, and the crawl continues.
+- `@fetchbrain.com/sdk/package.json` is now exported, so
+  `require("@fetchbrain.com/sdk/package.json")` works.
 
 ### Changed
 - The default `ask()` timeout is now 60s (was a fixed 10s), so answer mode, which can take
   tens of seconds, no longer comes back `unavailable` while the API is still answering.
+- Per-request log lines (`Recalled`, `Used brain data`, and `Running handler … with recalled
+  data available`) are now logged at debug level, like `Learning` and `Bypassing`. A large
+  crawl no longer prints one INFO line per page; the end-of-run summary is unchanged.
 
 ### Fixed
 - `ask()` has its own circuit breaker. Slow or failing asks no longer pause recall and
