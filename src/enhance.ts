@@ -84,7 +84,15 @@ function safeChangeStats(client: FetchBrainClient) {
 }
 
 const STRIP_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
-const SDK_USERDATA_KEYS = new Set(["fetchBrainRecalled", "fetchBrainData", "__fetchBrainResult"]);
+// SDK bookkeeping in request.userData: never part of a request's identity or learned data.
+// __fetchBrainCounted marks a request already counted in the run-level stats
+// (recalled, or scraped after a successful handler), so a retry never counts it twice.
+const SDK_USERDATA_KEYS = new Set([
+  "fetchBrainRecalled",
+  "fetchBrainData",
+  "__fetchBrainResult",
+  "__fetchBrainCounted",
+]);
 // Cap on in-process pre-recalled payloads (see preRecalledData). Payloads are full
 // learned records, so the worst case is roughly cap × record size; oldest-first
 // eviction targets entries least likely to still execute.
@@ -323,6 +331,8 @@ export class FetchBrain {
       totalRequests: 0,
       recalled: 0,
       aiSkipped: 0, // brain knew + skipped scraping
+      requestsSkipped: 0, // recalled without a fetch (pre-recalled at enqueue + skipNavigation)
+      lateRecalls: 0, // recalled after the page was already fetched
       learned: 0,
       scraped: 0, // Actually ran handler
       bypassed: 0, // skipLabels match — ran handler outside FetchBrain
@@ -578,22 +588,42 @@ export class FetchBrain {
 
         // 4. Auto-optimization: if brain knows and handler should not run, skip
         if (aiResult.known && aiResult.data && !runHandler) {
-          runStats.recalled++;
-          runStats.aiSkipped++;
           logger.info(`Recalled: ${url} [${handlerLabel || "default"}]`);
           if (originalPushData) {
             await originalPushData.call(context, aiResult.data);
+          }
+          // Count only once the data was delivered, and once per request: a retry
+          // after a failed push (or a handler timeout) must not count it again.
+          try {
+            if (!request.userData?.__fetchBrainCounted) {
+              request.userData = { ...request.userData, __fetchBrainCounted: true };
+              runStats.recalled++;
+              runStats.aiSkipped++;
+              // Only a request pre-recalled at enqueue AND marked skipNavigation
+              // avoided its fetch. A late recall is a known page whose fetch DID
+              // happen. A user-set skipNavigation was never fetched, so it counts
+              // as recalled only — never as untapped savings or spend.
+              const skippedNav = (request as { skipNavigation?: boolean }).skipNavigation === true;
+              if (preRecalled?.known && skippedNav) {
+                runStats.requestsSkipped++;
+              } else if (!skippedNav) {
+                runStats.lateRecalls++;
+              }
+            }
+          } catch (countErr) {
+            logger.debug(`Run stats skipped: ${countErr}`);
           }
           await fireOnRecalled(aiResult.data);
           return;
         }
 
         // 5. Run handler (either brain doesn't know, or alwaysRun matches this label)
-        runStats.scraped++;
+        // Per-label counts are per attempt (failure/empty rates need every attempt);
+        // the run-level scraped/recalled are counted once per request, after the
+        // handler succeeds (see below).
         const counts = labelCounts(request.label);
         if (counts) counts.scraped++;
         if (aiResult.known) {
-          runStats.recalled++;
           logger.info(
             `Running handler [${
               handlerLabel || "default"
@@ -637,6 +667,18 @@ export class FetchBrain {
         } catch (handlerErr) {
           if (counts) counts.failed++;
           throw handlerErr;
+        }
+
+        // Once per request, and only once its handler succeeded: a retry never
+        // counts it twice and a request that finally fails is not counted.
+        try {
+          if (!request.userData?.__fetchBrainCounted) {
+            request.userData = { ...request.userData, __fetchBrainCounted: true };
+            runStats.scraped++;
+            if (aiResult.known) runStats.recalled++;
+          }
+        } catch (countErr) {
+          logger.debug(`Run stats skipped: ${countErr}`);
         }
 
         // A page we would have learned from that pushed nothing counts as empty.
@@ -777,7 +819,19 @@ export class FetchBrain {
         const runStartedAt = new Date(runStats.startTime).toISOString();
         // Per-run isolation: the report, `changed` and warnings cover this run() only.
         labelStats.clear();
-        const runBase = { scraped: runStats.scraped, learned: runStats.learned, recalled: runStats.recalled };
+        // Counters are cumulative per enhanced crawler; the summary and report use
+        // deltas from this snapshot (one literal, so every field is from one instant).
+        const runBase = {
+          totalRequests: runStats.totalRequests,
+          bypassed: runStats.bypassed,
+          dropped: runStats.dropped,
+          scraped: runStats.scraped,
+          learned: runStats.learned,
+          recalled: runStats.recalled,
+          aiSkipped: runStats.aiSkipped,
+          requestsSkipped: runStats.requestsSkipped,
+          lateRecalls: runStats.lateRecalls,
+        };
         const changeBase = safeChangeStats(client);
         const runId = nextRunId();
         try {
@@ -800,11 +854,23 @@ export class FetchBrain {
           const duration = ((Date.now() - runStats.startTime) / 1000).toFixed(
             1,
           );
+          // This run()'s counts (the counters themselves span every run() call).
+          const run = {
+            totalRequests: runStats.totalRequests - runBase.totalRequests,
+            bypassed: runStats.bypassed - runBase.bypassed,
+            dropped: runStats.dropped - runBase.dropped,
+            scraped: runStats.scraped - runBase.scraped,
+            learned: runStats.learned - runBase.learned,
+            recalled: runStats.recalled - runBase.recalled,
+            aiSkipped: runStats.aiSkipped - runBase.aiSkipped,
+            requestsSkipped: runStats.requestsSkipped - runBase.requestsSkipped,
+            lateRecalls: runStats.lateRecalls - runBase.lateRecalls,
+          };
           // Bypassed requests opted out of FetchBrain, so they don't dilute the savings rate
-          const managedRequests = runStats.totalRequests - runStats.bypassed;
+          const managedRequests = run.totalRequests - run.bypassed;
           const savingsPercent =
             managedRequests > 0
-              ? ((runStats.aiSkipped / managedRequests) * 100).toFixed(1)
+              ? ((run.aiSkipped / managedRequests) * 100).toFixed(1)
               : "0";
 
           let changes: { changed: number; drift: DriftItem[] } = { changed: 0, drift: [] };
@@ -822,13 +888,22 @@ export class FetchBrain {
           const showChanged = config.changeDetection?.enabled === true || changes.changed > 0;
 
           logger.info(
-            `🧠 Finished! recalled: ${runStats.recalled}/${managedRequests} (${savingsPercent}%), ` +
-              `learned: ${runStats.learned}, scraped: ${runStats.scraped}` +
-              (skipLabels ? `, bypassed: ${runStats.bypassed}` : "") +
-              (runStats.dropped ? `, dropped: ${runStats.dropped}` : "") +
+            `🧠 Finished! recalled: ${run.recalled}/${managedRequests} (${savingsPercent}%), ` +
+              `requests skipped: ${run.requestsSkipped}, ` +
+              `learned: ${run.learned}, scraped: ${run.scraped}` +
+              (skipLabels ? `, bypassed: ${run.bypassed}` : "") +
+              (run.dropped ? `, dropped: ${run.dropped}` : "") +
               (showChanged ? `, changed: ${changes.changed}` : "") +
               `, duration: ${duration}s`,
           );
+          // Pages recalled only after their fetch could have skipped it. The tip does
+          // not apply with retryOnBlocked (its blocked-check needs the fetch) or with
+          // preRecall off.
+          if (run.lateRecalls > 0 && !crawlerAny.retryOnBlocked && config.preRecall !== false) {
+            logger.info(
+              `${run.lateRecalls} ${run.lateRecalls === 1 ? "page was" : "pages were"} recalled after ${run.lateRecalls === 1 ? "it was" : "they were"} fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch (non-GET requests also need an explicit uniqueKey).`,
+            );
+          }
 
           for (const item of changes.drift) {
             try {
@@ -847,9 +922,12 @@ export class FetchBrain {
                 build: config.refreshOnRebuild ? getPlatformBuildId() : undefined,
                 startedAt: runStartedAt,
                 endedAt: new Date().toISOString(),
-                scraped: runStats.scraped - runBase.scraped,
-                learned: runStats.learned - runBase.learned,
-                recalled: runStats.recalled - runBase.recalled,
+                scraped: run.scraped,
+                learned: run.learned,
+                recalled: run.recalled,
+                requestsSkipped: run.requestsSkipped,
+                lateRecalls: run.lateRecalls,
+                bypassed: run.bypassed,
                 labels,
               });
               for (const flag of Array.isArray(flags) ? flags : []) {
@@ -925,10 +1003,11 @@ export class FetchBrain {
               // recall; if that yields no answer (API down), the safe state is a
               // normal fetch — never a permanently poisoned, forever-dropped request.
               const prior = r.userData?.__fetchBrainResult as { known?: boolean } | undefined;
-              if (prior) {
-                if (prior.known && r.skipNavigation) r.skipNavigation = false;
+              if (prior || r.userData?.__fetchBrainCounted) {
+                if (prior?.known && r.skipNavigation) r.skipNavigation = false;
                 const rest = { ...(r.userData as Record<string, unknown>) };
                 delete rest.__fetchBrainResult;
+                delete rest.__fetchBrainCounted; // counted in an earlier run, not this one
                 r.userData = rest;
               }
               if (r.skipNavigation) continue;

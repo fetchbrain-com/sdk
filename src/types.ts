@@ -48,6 +48,12 @@ export interface RunReport {
   scraped: number;
   learned: number;
   recalled: number;
+  /** Recalled pages whose fetch was skipped (pre-recalled at enqueue). Per run() call. */
+  requestsSkipped?: number;
+  /** Recalled pages that were fetched first (recall happened in the handler). Per run() call. */
+  lateRecalls?: number;
+  /** Pages handled outside FetchBrain (`skipLabels`). Per run() call. */
+  bypassed?: number;
   labels?: Record<string, RunLabelCounts>;
 }
 

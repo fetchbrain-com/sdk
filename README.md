@@ -575,9 +575,42 @@ never relearned.
 
 When a run finishes, the SDK sends a small report containing exactly: the run
 id, start and end timestamps, totals for scraped, learned and recalled pages,
-per request label how many pages were scraped, came back empty or failed, and
-your build id only when `refreshOnRebuild` is on. It contains no URLs and no
-scraped data. A page counts as "pushed no data" when your handler pushed nothing
+requests skipped, late recalls and bypassed pages, per request label how many
+pages were scraped, came back empty or failed, and your build id only when
+`refreshOnRebuild` is on. It contains no URLs and no scraped data.
+
+| Field | Meaning |
+| --- | --- |
+| `scraped` | pages whose handler ran to completion (unknown pages, and known pages matched by `alwaysRun`) |
+| `learned` | records the brain accepted from this run |
+| `recalled` | known pages served from memory, whether or not their handler also ran |
+| `requestsSkipped` | known pages served from memory **without a fetch**: pre-recalled when they were enqueued, so Crawlee never requested them |
+| `lateRecalls` | known pages served from memory **after** they were fetched: the recall happened in your handler, so the request was already spent |
+| `bypassed` | pages handled outside FetchBrain because of `skipLabels` |
+
+Every count covers one `run()` call. A request is counted once, after it
+succeeded (its handler finished, or its recalled data was pushed), so a retry
+never counts it twice and a request that finally fails is not counted. The
+per-label counts are the exception: they count every attempt, so failure and
+empty rates see each retry. Each `run()` call gets its own run id: on a platform that sets
+a run id, the first call uses it as-is and later calls in the same process
+(another `run()`, or a second crawler) add `-2`, `-3` and so on.
+
+Requests skipped is what saves you requests. Late recalls are pages that came
+from the queue without a [pre-recall](#recall-at-enqueue-time-prerecall):
+links from `enqueueLinks()` or the context `addRequests()`, and every known page
+on a `retryOnBlocked` crawler, plus non-GET requests without an explicit
+`uniqueKey` (pre-recall can't identify them at enqueue time; set one to let it).
+Known requests you marked `skipNavigation` yourself count only as `recalled`,
+never as late recalls: they were never fetched.
+When a run has late recalls, the summary line is followed by a tip such as:
+
+```
+3 pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch (non-GET requests also need an explicit uniqueKey).
+```
+
+The tip is not shown on `retryOnBlocked` crawlers (their blocked-check needs
+the fetch, so those pages can't skip it) or when `preRecall` is `false`. A page counts as "pushed no data" when your handler pushed nothing
 through `context.pushData` or the SDK's `pushData` export (pages written
 straight to Crawlee's static `Dataset.pushData` are counted that way too), and
 retries count once per attempt. The report is sent with the same standard
@@ -634,7 +667,7 @@ or route those requests through `skipLabels`, which sends nothing for them.
 `ask()` sends your question and options. Telemetry sends nothing unless you
 [opt in](#telemetry-opt-in). At the end of a run the SDK also sends a small
 [run report](#run-report): run id, start/end timestamps, scraped/learned/recalled
-counts, per-label page counts, and a build id only with `refreshOnRebuild`
+counts, requests skipped, late recalls and bypassed counts, per-label page counts, and a build id only with `refreshOnRebuild`
 (`reportRuns: false` turns it off).
 
 ## Telemetry (opt-in)
@@ -654,6 +687,16 @@ API with your API key and the [headers above](#what-leaves-your-process),
 so they're linked to your account. They're used to improve FetchBrain's
 recommendations (proxy recommendations, block detection, configuration
 tuning); aggregated statistics may inform recommendations for other users.
+
+**How long it's kept:** raw entries are deleted about 30 days after they're
+received (a daily cleanup), and all of your entries are deleted when you
+delete your account (a very large history may take the daily cleanup a few
+days to finish, never longer than the 30 days above).
+Per-domain aggregate counts (requests, successes, blocks and block rate for a
+hostname, with no URLs and no account link) are kept. Per-domain statistics
+are aggregated per domain, not per account: entries from every account that
+scraped a hostname add to the same counts, and they are not deleted with your
+account.
 
 **When it's collected:** one entry per request FetchBrain handles
 (`skipLabels` requests are excluded), after your handler finishes — or

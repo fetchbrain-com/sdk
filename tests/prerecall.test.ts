@@ -660,14 +660,16 @@ describe("run summary", () => {
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
 
     const { crawler } = createFakeCrawler(vi.fn());
-    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
-
     const { context } = makeContext({
       url: "https://site/p/1",
       userData: { __fetchBrainResult: { known: true } },
       skipNavigation: true,
     });
-    await enhanced.requestHandler(context).catch(() => {}); // dropped: skipped fetch + expired memory
+    // The summary covers this run() only, so the request is handled inside it.
+    crawler.run = async () => {
+      await enhanced.requestHandler(context).catch(() => {}); // dropped: skipped fetch + expired memory
+    };
+    const enhanced: any = FetchBrain.enhance(crawler, CONFIG);
     await enhanced.run();
 
     const summary = infoSpy.mock.calls.map((c) => c.join(" ")).find((l) => l.includes("Finished!"));

@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-24
+
+### Added
+- The run report and the run summary now separate **requests skipped** (known pages served
+  from memory without a fetch, because they were pre-recalled at enqueue) from **late
+  recalls** (known pages recalled only after their fetch). The report also carries
+  `bypassed` (`skipLabels` pages). New optional `RunReport` fields: `requestsSkipped`,
+  `lateRecalls`, `bypassed`.
+- When a run has late recalls, the summary prints a one-line tip to enqueue those pages with
+  `context.crawler.addRequests([...])` so their fetch is skipped (not shown on
+  `retryOnBlocked` crawlers or with `preRecall: false`).
+- README: telemetry retention (raw entries deleted after about 30 days and on account
+  deletion; per-domain aggregate counts kept, aggregated per domain, not per account).
+
+### Changed
+- The run-level `scraped` (and `recalled` for `alwaysRun` pages) now counts each request
+  once, after its handler succeeds. It used to count every attempt, so retries inflated it
+  and requests that finally failed were included. Per-label counts still count every attempt.
+
+### Fixed
+- The "🧠 Finished!" summary now shows this `run()`'s counts; a second `run()` used to print
+  totals since the crawler was enhanced.
+- A recalled request is counted once, after its data was pushed. A retry after a failed push
+  no longer counts it again, and a request that finally fails is not counted.
+
 ## [0.8.0] - 2026-11-24
 
 ### Added
