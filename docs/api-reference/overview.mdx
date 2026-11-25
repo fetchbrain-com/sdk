@@ -57,8 +57,8 @@ X-FB-Context: {"FETCHBRAIN_SCRAPER_ID":"shop-a"}
 - On Apify, `APIFY_ACTOR_ID` in the same header scopes memory per actor; a
   valid `FETCHBRAIN_SCRAPER_ID` takes precedence over it.
 - A new name starts empty. What you learned without a name stays in the
-  default memory. One exception: a name equal to an Apify actor id on your
-  account (lowercased, with `/` replaced by `_`) shares that actor's memory.
+  default memory, and a name never shares memory with an Apify actor id,
+  even one spelled the same.
 - The header is capped at 2048 characters. Anything larger, or anything that
   isn't a JSON object, is ignored.
 - On `/v1/ask`, a name (or `APIFY_ACTOR_ID`) narrows the answer to that
