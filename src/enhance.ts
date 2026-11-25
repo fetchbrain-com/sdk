@@ -171,13 +171,48 @@ function buildRawRequest(request: Record<string, unknown>): RawRequest {
   return { url: r.url, method: r.method, uniqueKey: r.uniqueKey, body, headers, userData, label: labelText(r.label) };
 }
 
+/**
+ * How a request appears in SDK log lines: `logUrl` when set, else the URL. Fails
+ * closed — a throw, a rejected promise or a non-string result omits the URL rather
+ * than printing it raw — and never throws into the crawl.
+ */
+function logUrlFor(
+  request: { url: string; uniqueKey?: string; label?: unknown; userData?: Record<string, unknown> },
+  logUrl: FetchBrainConfig["logUrl"],
+): string | undefined {
+  if (!logUrl) return request.url;
+  try {
+    const shown: unknown = logUrl({
+      url: request.url,
+      uniqueKey: request.uniqueKey ?? request.url,
+      label: labelText(request.label),
+      userData: request.userData ?? {},
+    });
+    if (shown && typeof (shown as PromiseLike<unknown>).then === "function") {
+      Promise.resolve(shown).catch(() => {}); // an async logUrl must not cause an unhandled rejection
+      return undefined;
+    }
+    return typeof shown === "string" && shown !== "" ? shown : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `: <shown>`, or nothing when the URL is omitted — appended to a log line. */
+const urlSuffix = (shown: string | undefined): string => (shown ? `: ${shown}` : "");
+
 /** Warn once when a body-bearing request can't be differentiated by its key. */
-function warnDefaultUniqueKey(request: { url: string; method?: string; uniqueKey?: string }, logger: Logger, warned: Set<string>): void {
+function warnDefaultUniqueKey(
+  request: { url: string; method?: string; uniqueKey?: string },
+  logger: Logger,
+  warned: Set<string>,
+  shownUrl: () => string | undefined,
+): void {
   const method = (request.method ?? "GET").toUpperCase();
   const isDefault = !request.uniqueKey || request.uniqueKey === request.url;
   if (method !== "GET" && isDefault && !warned.has(request.url)) {
     warned.add(request.url);
-    logger.warn(`FetchBrain: ${method} ${request.url} has a default uniqueKey — set request.uniqueKey to your stable identity, or these requests won't get their own memory.`);
+    logger.warn(`FetchBrain: ${method} ${shownUrl() ?? "request"} has a default uniqueKey — set request.uniqueKey to your stable identity, or these requests won't get their own memory.`);
   }
 }
 
@@ -463,7 +498,9 @@ export class FetchBrain {
       // requests (search/pagination) whose data isn't worth remembering.
       if (skipLabels && skipLabels.has(label || "default")) {
         runStats.bypassed++;
-        logger.debug(`Bypassing FetchBrain for [${label || "default"}]: ${url}`);
+        if (config.debug) {
+          logger.debug(`Bypassing FetchBrain for [${label || "default"}]${urlSuffix(logUrlFor(buildRawRequest(request as Record<string, unknown>), config.logUrl))}`);
+        }
         await originalHandler.call(crawler, context);
         return;
       }
@@ -477,7 +514,10 @@ export class FetchBrain {
 
       // Snapshot BEFORE enhance mutates request.userData
       const rawRequest = buildRawRequest(request as Record<string, unknown>);
-      warnDefaultUniqueKey(rawRequest, logger, warnedKeys);
+      // How this request appears in log lines; computed at most once, only when printed.
+      let shown: { text: string | undefined } | undefined;
+      const shownUrl = () => (shown ??= { text: logUrlFor(rawRequest, config.logUrl) }).text;
+      warnDefaultUniqueKey(rawRequest, logger, warnedKeys, shownUrl);
 
       // Consume-on-confirmed-delivery: if the handler fails after a stashed payload
       // was read (dataset write error, handler timeout), the catch puts it back so a
@@ -525,13 +565,13 @@ export class FetchBrain {
           // "unknown" from a healthy API fails fast without retries.
           if (aiResult.fallback) {
             throw new Error(
-              `FetchBrain: ${url} skipped its fetch at enqueue time and its remembered data could not be restored (API unreachable) — retrying.`,
+              `FetchBrain: ${shownUrl() ?? "a request"} skipped its fetch at enqueue time and its remembered data could not be restored (API unreachable) — retrying.`,
             );
           }
           runStats.dropped++;
           (request as { noRetry?: boolean }).noRetry = true;
           throw new Error(
-            `FetchBrain: ${url} skipped its fetch at enqueue time but its remembered data is no longer available — failing without retries; it will be re-scraped on a future run.`,
+            `FetchBrain: ${shownUrl() ?? "a request"} skipped its fetch at enqueue time but its remembered data is no longer available — failing without retries; it will be re-scraped on a future run.`,
           );
         }
 
@@ -569,7 +609,7 @@ export class FetchBrain {
             if (aiResult.known && aiResult.data && originalPushData) {
               usedAIData = true;
               await originalPushData.call(context, aiResult.data);
-              logger.info(`Used brain data: ${url}`);
+              if (config.debug) logger.debug(`Used brain data${urlSuffix(shownUrl())}`);
               await fireOnRecalled(aiResult.data);
             }
           },
@@ -588,7 +628,7 @@ export class FetchBrain {
 
         // 4. Auto-optimization: if brain knows and handler should not run, skip
         if (aiResult.known && aiResult.data && !runHandler) {
-          logger.info(`Recalled: ${url} [${handlerLabel || "default"}]`);
+          if (config.debug) logger.debug(`Recalled${urlSuffix(shownUrl())} [${handlerLabel || "default"}]`);
           if (originalPushData) {
             await originalPushData.call(context, aiResult.data);
           }
@@ -624,13 +664,11 @@ export class FetchBrain {
         const counts = labelCounts(request.label);
         if (counts) counts.scraped++;
         if (aiResult.known) {
-          logger.info(
-            `Running handler [${
-              handlerLabel || "default"
-            }] with recalled data available: ${url}`,
-          );
-        } else {
-          logger.debug(`Learning: ${url}`);
+          if (config.debug) {
+            logger.debug(`Running handler [${handlerLabel || "default"}] with recalled data available${urlSuffix(shownUrl())}`);
+          }
+        } else if (config.debug) {
+          logger.debug(`Learning${urlSuffix(shownUrl())}`);
         }
 
         // Intercept context.pushData to capture results for learning
