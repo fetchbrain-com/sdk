@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README: telemetry retention (raw entries deleted after about 30 days and on account
   deletion; per-domain aggregate counts kept, aggregated per domain, not per account).
 
+### Changed
+- The run-level `scraped` (and `recalled` for `alwaysRun` pages) now counts each request
+  once, after its handler succeeds. It used to count every attempt, so retries inflated it
+  and requests that finally failed were included. Per-label counts still count every attempt.
+
 ### Fixed
 - The "🧠 Finished!" summary now shows this `run()`'s counts; a second `run()` used to print
   totals since the crawler was enhanced.

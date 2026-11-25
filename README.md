@@ -581,18 +581,20 @@ pages were scraped, came back empty or failed, and your build id only when
 
 | Field | Meaning |
 | --- | --- |
-| `scraped` | pages whose handler ran (unknown pages, and known pages matched by `alwaysRun`) |
+| `scraped` | pages whose handler ran to completion (unknown pages, and known pages matched by `alwaysRun`) |
 | `learned` | records the brain accepted from this run |
 | `recalled` | known pages served from memory, whether or not their handler also ran |
 | `requestsSkipped` | known pages served from memory **without a fetch**: pre-recalled when they were enqueued, so Crawlee never requested them |
 | `lateRecalls` | known pages served from memory **after** they were fetched: the recall happened in your handler, so the request was already spent |
 | `bypassed` | pages handled outside FetchBrain because of `skipLabels` |
 
-Every count covers one `run()` call. A request is counted once, after its data
-was pushed, so a retry never counts it twice and a request that finally fails
-is not counted. Each `run()` call gets its own run id: on a platform that sets
+Every count covers one `run()` call. A request is counted once, after it
+succeeded (its handler finished, or its recalled data was pushed), so a retry
+never counts it twice and a request that finally fails is not counted. The
+per-label counts are the exception: they count every attempt, so failure and
+empty rates see each retry. Each `run()` call gets its own run id: on a platform that sets
 a run id, the first call uses it as-is and later calls in the same process
-(another `run()`, or a second crawler) add `:1`, `:2` and so on.
+(another `run()`, or a second crawler) add `-2`, `-3` and so on.
 
 Requests skipped is what saves you requests. Late recalls are pages that came
 from the queue without a [pre-recall](#recall-at-enqueue-time-prerecall):

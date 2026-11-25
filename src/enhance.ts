@@ -85,8 +85,8 @@ function safeChangeStats(client: FetchBrainClient) {
 
 const STRIP_HEADERS = new Set(["authorization", "cookie", "set-cookie"]);
 // SDK bookkeeping in request.userData: never part of a request's identity or learned data.
-// __fetchBrainCounted marks a recalled request already counted in the run stats, so a
-// retry (or a re-run handler) never counts it twice.
+// __fetchBrainCounted marks a request already counted in the run-level stats
+// (recalled, or scraped after a successful handler), so a retry never counts it twice.
 const SDK_USERDATA_KEYS = new Set([
   "fetchBrainRecalled",
   "fetchBrainData",
@@ -618,11 +618,12 @@ export class FetchBrain {
         }
 
         // 5. Run handler (either brain doesn't know, or alwaysRun matches this label)
-        runStats.scraped++;
+        // Per-label counts are per attempt (failure/empty rates need every attempt);
+        // the run-level scraped/recalled are counted once per request, after the
+        // handler succeeds (see below).
         const counts = labelCounts(request.label);
         if (counts) counts.scraped++;
         if (aiResult.known) {
-          runStats.recalled++;
           logger.info(
             `Running handler [${
               handlerLabel || "default"
@@ -666,6 +667,18 @@ export class FetchBrain {
         } catch (handlerErr) {
           if (counts) counts.failed++;
           throw handlerErr;
+        }
+
+        // Once per request, and only once its handler succeeded: a retry never
+        // counts it twice and a request that finally fails is not counted.
+        try {
+          if (!request.userData?.__fetchBrainCounted) {
+            request.userData = { ...request.userData, __fetchBrainCounted: true };
+            runStats.scraped++;
+            if (aiResult.known) runStats.recalled++;
+          }
+        } catch (countErr) {
+          logger.debug(`Run stats skipped: ${countErr}`);
         }
 
         // A page we would have learned from that pushed nothing counts as empty.
@@ -888,7 +901,7 @@ export class FetchBrain {
           // preRecall off.
           if (run.lateRecalls > 0 && !crawlerAny.retryOnBlocked && config.preRecall !== false) {
             logger.info(
-              `${run.lateRecalls} pages were recalled after they were fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch (non-GET requests also need an explicit uniqueKey).`,
+              `${run.lateRecalls} ${run.lateRecalls === 1 ? "page was" : "pages were"} recalled after ${run.lateRecalls === 1 ? "it was" : "they were"} fetched; enqueue them with context.crawler.addRequests([...]) to skip the fetch (non-GET requests also need an explicit uniqueKey).`,
             );
           }
 

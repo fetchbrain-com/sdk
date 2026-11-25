@@ -191,7 +191,9 @@ describe("run tracking and summary", () => {
       DETAIL: { scraped: 3, empty: 1, failed: 1 },
       _nolabel: { scraped: 1, empty: 0, failed: 0 },
     });
-    expect(report.scraped).toBe(4);
+    // Run-level scraped counts requests whose handler succeeded; the failed one is
+    // only in the per-label (per-attempt) counts.
+    expect(report.scraped).toBe(3);
   });
 
   it("does not count empty for known non-relearn pages, learning:false, or recalled-data pages", async () => {
@@ -398,7 +400,7 @@ describe("run tracking: requests skipped and late recalls", () => {
   const report = (i = 0) => m.reportRun.mock.calls[i][0];
   const knownBulk = () =>
     m.recallBulk.mockImplementation(async (rs: unknown[]) => rs.map(() => ({ known: true, data: { title: "old" } })));
-  const TIP = "were recalled after they were fetched";
+  const TIP = "recalled after";
 
   it("1. a pre-recalled known page counts as a request skipped", async () => {
     knownBulk();
@@ -436,7 +438,9 @@ describe("run tracking: requests skipped and late recalls", () => {
     await e.run([{ url: "https://a.test/api", method: "POST" }]);
     expect(m.recallBulk).not.toHaveBeenCalled(); // pre-recall can't identify it at enqueue
     expect(report()).toMatchObject({ recalled: 1, requestsSkipped: 0, lateRecalls: 1 });
-    expect(info.mock.calls.map((c) => c.join(" ")).join("\n")).toContain("non-GET requests also need an explicit uniqueKey");
+    const logs = info.mock.calls.map((c) => c.join(" ")).join("\n");
+    expect(logs).toContain("1 page was recalled after it was fetched;");
+    expect(logs).toContain("non-GET requests also need an explicit uniqueKey");
     info.mockRestore();
   });
 
@@ -478,6 +482,26 @@ describe("run tracking: requests skipped and late recalls", () => {
     expect(c.pushData).toHaveBeenCalledTimes(2);
     expect(report()).toMatchObject({ recalled: 1, lateRecalls: 1 });
     expect(c.request).toHaveProperty("userData.__fetchBrainCounted", true);
+  });
+
+  it("6c. a handler that throws twice then succeeds counts scraped/recalled once; per-label counts stay per attempt", async () => {
+    knownBulk();
+    let attempts = 0;
+    const handler = async () => {
+      if (++attempts < 3) throw new Error("flaky");
+    };
+    const e = FetchBrain.enhance(queueCrawler(handler, { maxRetries: 2 }), { ...base, alwaysRun: ["D"] });
+    await e.run([{ url: "https://a.test/1", label: "D" }]);
+    expect(attempts).toBe(3);
+    expect(report()).toMatchObject({ scraped: 1, recalled: 1, requestsSkipped: 0, lateRecalls: 0 });
+    expect(report().labels).toMatchObject({ D: { scraped: 3, failed: 2 } });
+  });
+
+  it("6d. a handler that always throws is not counted as scraped", async () => {
+    m.recallBulk.mockImplementation(async (rs: unknown[]) => rs.map(() => ({ known: false })));
+    const e = FetchBrain.enhance(queueCrawler(async () => { throw new Error("down"); }, { maxRetries: 2 }), base);
+    await e.run(["https://a.test/1"]);
+    expect(report()).toMatchObject({ scraped: 0, recalled: 0 });
   });
 
   it("7. pushData always rejects: not counted", async () => {
