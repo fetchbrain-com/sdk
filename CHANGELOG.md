@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `require("@fetchbrain.com/sdk/package.json")` works.
 
 ### Changed
+- The docs and the mock now name Gemma 4 26B (`"gemma-4-26b"`) as the default `ask()` answer
+  model, matching the API. In answer mode without `model`, `MockFetchBrain` and the mock
+  server now report `"gemma-4-26b"` instead of `"llama-3.3-70b"`. `"llama-3.3-70b"` is still
+  included on every plan.
 - The default `ask()` timeout is now 60s (was a fixed 10s), so answer mode, which can take
   tens of seconds, no longer comes back `unavailable` while the API is still answering.
 - Per-request log lines (`Recalled`, `Used brain data`, and `Running handler … with recalled

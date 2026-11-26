@@ -432,8 +432,9 @@ console.log(res.answer);   // synthesized answer
 console.log(res.sources);  // scored sources
 ```
 
-Pick the model that writes the answer with `model` — the default is
-`"llama-3.3-70b"`, included on every plan. Premium models like
+Pick the model that writes the answer with `model` — the default is Gemma 4
+26B (`"gemma-4-26b"`, included on every plan; `"llama-3.3-70b"` is also
+included). Premium models like
 `"kimi-k2.5"` and `"kimi-k2.6"` use extra ask credits and need a paid plan,
 and `"byok"` answers with your own linked provider model (configured in the
 dashboard, billed to your provider):

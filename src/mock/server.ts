@@ -148,7 +148,7 @@ app.post("/v1/ask", (req, res) => {
         ? `Based on ${sources.length} remembered page${sources.length === 1 ? "" : "s"}: ${JSON.stringify(sources[0].data)}`
         : "Nothing remembered yet for that question.";
     // Echo the requested model slug like the real API reports what it used.
-    response.model = typeof body.model === "string" ? body.model : "llama-3.3-70b";
+    response.model = typeof body.model === "string" ? body.model : "gemma-4-26b";
   }
 
   res.json(response);

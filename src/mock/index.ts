@@ -181,7 +181,7 @@ export class MockFetchBrain {
       sources,
       status: "ok",
       answer,
-      model: opts?.model ?? "llama-3.3-70b",
+      model: opts?.model ?? "gemma-4-26b",
     };
   }
 
