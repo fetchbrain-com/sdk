@@ -164,7 +164,7 @@ describe('MockFetchBrain', () => {
       const brain = new MockFetchBrain();
       await brain.seed("https://x.com/p1", { title: "Blue Widget" });
       const res = await brain.ask("blue widget", { answer: true });
-      expect(res.model).toBe("llama-3.3-70b");
+      expect(res.model).toBe("gemma-4-26b");
     });
 
     it('omits model outside answer mode', async () => {
